@@ -1,8 +1,11 @@
 import os
+from html import escape
+
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select, func, update
 from sqlalchemy.orm import joinedload
 
@@ -12,7 +15,8 @@ from db.models import Product, Stock, Sale, User, UserProductAccess
 from keyboards.common_keyboards import (
     get_main_menu_keyboard, create_products_keyboard, 
     create_sizes_keyboard, get_cancel_kb, remove_kb,
-    get_my_sales_keyboard, create_confirmation_keyboard
+    get_my_sales_keyboard, create_confirmation_keyboard,
+    create_label_sizes_keyboard
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
@@ -71,12 +75,25 @@ async def show_product_stock(callback: CallbackQuery):
         )
         result = await session.execute(stmt)
         sizes_stock = result.all()
+
+    product_name = escape(product.name)
     if not sizes_stock:
-        response_text = f"**{product.name}**\n\nВсе размеры проданы."
+        response_text = f"<b>{product_name}</b>\n\nВсе размеры проданы."
     else:
-        sizes_info = "\n".join([f"Размер: {size} - {count} шт." for size, count in sizes_stock])
-        response_text = f"**{product.name}**\n\n**Остатки по размерам:**\n{sizes_info}"
-    await callback.message.answer_photo(photo=product.photo_id, caption=response_text, parse_mode="Markdown")
+        sizes_info = "\n".join([f"Размер: {escape(size)} - {count} шт." for size, count in sizes_stock])
+        response_text = f"<b>{product_name}</b>\n\n<b>Остатки по размерам:</b>\n{sizes_info}"
+    
+    try:
+        await callback.message.answer_photo(photo=product.photo_id, caption=response_text, parse_mode="HTML")
+    except TelegramBadRequest as e:
+        if "wrong file identifier" in e.message:
+            await callback.message.answer(
+                f"{response_text}\n\n<i>(Не удалось загрузить фото товара)</i>",
+                parse_mode="HTML"
+            )
+        else:
+            raise e
+            
     await callback.answer()
 
 # --- Просмотр и подтверждение своих продаж ---
@@ -99,12 +116,16 @@ async def my_sales_handler(message: Message):
     response_text = "Ваши продажи:\n\n"
     for sale in user_sales:
         status = "✅ Подтверждена" if sale.is_confirmed else "❌ Требуется подтверждение"
+        product_name = escape(sale.stock_item.product.name)
+        product_size = escape(sale.stock_item.size)
+        account = escape(sale.account or 'Не указан')
         response_text += (
-            f"🔹 **№{sale.id}** | {sale.sale_date.strftime('%d.%m.%Y')} | "
-            f"{sale.stock_item.product.name} ({sale.stock_item.size}) | **{status}**\n"
+            f"🔹 <b>№{sale.id}</b> | {sale.sale_date.strftime('%d.%m.%Y')} | "
+            f"{product_name} ({product_size})\n"
+            f"<b>Аккаунт:</b> {account} | <b>Статус:</b> {status}\n\n"
         )
     
-    await message.answer(response_text, parse_mode="Markdown", reply_markup=get_my_sales_keyboard())
+    await message.answer(response_text, parse_mode="HTML", reply_markup=get_my_sales_keyboard())
 
 @router.callback_query(F.data == "confirm_sale_menu")
 async def confirm_sale_menu_handler(callback: CallbackQuery):
@@ -176,7 +197,7 @@ async def select_sale_size(callback: CallbackQuery, state: FSMContext):
     size = parts[3]
     await state.update_data(size=size)
     await callback.message.delete()
-    await callback.message.answer(f"Выбран размер {size}. Введите цену продажи (только число):", reply_markup=get_cancel_kb())
+    await callback.message.answer(f"Выбран размер {size}. Введите цену продажи (в zł):", reply_markup=get_cancel_kb())
     await state.set_state(SaleStates.price)
 
 @router.message(StateFilter(SaleStates.price))
@@ -185,6 +206,12 @@ async def enter_sale_price(message: Message, state: FSMContext):
         await message.answer("Цена должна быть числом. Попробуйте еще раз.")
         return
     await state.update_data(price=float(message.text))
+    await message.answer("Введите аккаунт, на котором произошла продажа:")
+    await state.set_state(SaleStates.account)
+
+@router.message(StateFilter(SaleStates.account))
+async def enter_sale_account(message: Message, state: FSMContext):
+    await state.update_data(account=message.text)
     await message.answer("Отправьте ссылку на этикетку:")
     await state.set_state(SaleStates.label_link)
 
@@ -201,6 +228,7 @@ async def enter_screenshot(message: Message, state: FSMContext, bot: Bot):
     product_id = data.get('product_id')
     size = data.get('size')
     label_link = data.get('label_link')
+    account = data.get('account')
     try:
         async with async_session() as session:
             stmt_select = select(Stock.id).where(
@@ -219,6 +247,7 @@ async def enter_screenshot(message: Message, state: FSMContext, bot: Bot):
                 stock_id=stock_id,
                 seller_id=message.from_user.id,
                 price=data.get('price'),
+                account=account,
                 label_link=label_link
             )
             session.add(new_sale)
@@ -246,3 +275,58 @@ async def enter_screenshot(message: Message, state: FSMContext, bot: Bot):
         await message.answer(f"Произошла критическая ошибка при сохранении продажи: {e}", reply_markup=get_main_menu_keyboard())
     finally:
         await state.clear()
+        
+# --- Логика получения этикеток ---
+
+@router.message(F.text == "Получить этикетку 🏷️")
+async def get_label_start(message: Message, user: User):
+    async with async_session() as session:
+        products = await get_allowed_products(session, user)
+    
+    if not products:
+        await message.answer("Для вас нет доступных товаров.")
+        return
+    
+    keyboard = create_products_keyboard(products, action="label_product")
+    await message.answer("Выберите товар, для которого нужна этикетка:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("label_product_"))
+async def get_label_select_product(callback: CallbackQuery):
+    product_id = int(callback.data.split("_")[-1])
+    labels_dir = f"labels/{product_id}"
+    
+    available_sizes = []
+    if os.path.exists(labels_dir):
+        for filename in os.listdir(labels_dir):
+            size = os.path.splitext(filename)[0]
+            if size.replace('.', '', 1).isdigit():
+                available_sizes.append(size)
+
+    if not available_sizes:
+        await callback.answer("Для этого товара еще не загружены этикетки.", show_alert=True)
+        return
+
+    keyboard = create_label_sizes_keyboard(available_sizes, product_id)
+    await callback.message.edit_text("Выберите размер:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("get_label_"))
+async def get_label_send_file(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    product_id = int(parts[2])
+    size = parts[3]
+    labels_dir = f"labels/{product_id}"
+
+    label_path = None
+    for ext in ['.jpg', '.jpeg', '.png', '.pdf']:
+        path = os.path.join(labels_dir, f"{size}{ext}")
+        if os.path.exists(path):
+            label_path = path
+            break
+    
+    if label_path:
+        await callback.message.answer_document(FSInputFile(label_path))
+        await callback.answer()
+    else:
+        await callback.answer("Файл этикетки для этого размера не найден.", show_alert=True)
+    
+    await callback.message.delete()

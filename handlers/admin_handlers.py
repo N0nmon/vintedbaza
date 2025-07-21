@@ -1,10 +1,15 @@
+import math
+import csv
+import io
+import os
 from datetime import datetime, timedelta
 from html import escape
 
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, BufferedInputFile, InlineKeyboardMarkup
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select, delete, func, update
 from sqlalchemy.orm import joinedload
 
@@ -12,18 +17,117 @@ from db.database import async_session
 from db.models import User, Product, Stock, Sale, UserProductAccess
 from config import settings
 from keyboards.admin_keyboards import (
-    get_admin_panel_keyboard, get_sales_management_keyboard,
-    create_access_management_keyboard, get_user_management_keyboard,
-    create_user_selection_keyboard
+    get_admin_panel_keyboard, create_access_management_keyboard, 
+    get_user_management_keyboard, create_user_selection_keyboard, 
+    get_product_management_keyboard, create_product_selection_keyboard, 
+    get_product_edit_keyboard, create_sales_journal_keyboard,
+    get_sale_details_keyboard, get_journal_filter_keyboard,
+    create_filter_selection_keyboard, get_status_filter_keyboard,
+    create_text_filter_selection_keyboard, get_reports_panel_keyboard,
+    get_finance_summary_keyboard
 )
 from keyboards.common_keyboards import get_cancel_kb, remove_kb
-from states.admin_states import AdminStates, AddProductStates
+from states.admin_states import AdminStates, AddProductStates, EditProductStates, JournalFilterStates, ReportStates, AddStockStates
 
 router = Router()
 router.message.filter(F.from_user.id == settings.admin_id)
 router.callback_query.filter(F.from_user.id == settings.admin_id)
 
-# --- Универсальные обработчики отмены и возврата ---
+ITEMS_PER_PAGE = 10
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+async def show_admin_panel(message: Message):
+    await message.answer("Админ-панель:", reply_markup=get_admin_panel_keyboard())
+
+async def show_sales_journal(callback_or_message, state: FSMContext, page=0):
+    message = callback_or_message.message if isinstance(callback_or_message, CallbackQuery) else callback_or_message
+    filters = await state.get_data()
+    
+    async with async_session() as session:
+        base_query = select(Sale)
+        count_query = select(func.count(Sale.id))
+        
+        if filters.get('start_date'):
+            base_query = base_query.where(Sale.sale_date >= filters['start_date'])
+            count_query = count_query.where(Sale.sale_date >= filters['start_date'])
+        if filters.get('end_date'):
+            base_query = base_query.where(Sale.sale_date <= filters['end_date'])
+            count_query = count_query.where(Sale.sale_date <= filters['end_date'])
+        if filters.get('seller_id'):
+            base_query = base_query.where(Sale.seller_id == filters['seller_id'])
+            count_query = count_query.where(Sale.seller_id == filters['seller_id'])
+        if filters.get('product_id'):
+            base_query = base_query.join(Sale.stock_item).where(Stock.product_id == filters['product_id'])
+            count_query = count_query.join(Sale.stock_item).where(Stock.product_id == filters['product_id'])
+        if filters.get('account'):
+            base_query = base_query.where(Sale.account == filters['account'])
+            count_query = count_query.where(Sale.account == filters['account'])
+        if 'is_confirmed' in filters:
+            base_query = base_query.where(Sale.is_confirmed == filters['is_confirmed'])
+            count_query = count_query.where(Sale.is_confirmed == filters['is_confirmed'])
+        
+        total_sales_count = (await session.execute(count_query)).scalar_one()
+        total_pages = math.ceil(total_sales_count / ITEMS_PER_PAGE) if total_sales_count > 0 else 1
+        
+        stmt = (
+            base_query
+            .options(joinedload(Sale.stock_item).joinedload(Stock.product))
+            .order_by(Sale.sale_date.desc())
+            .offset(page * ITEMS_PER_PAGE)
+            .limit(ITEMS_PER_PAGE)
+        )
+        sales = (await session.execute(stmt)).scalars().all()
+
+    if not sales and page == 0:
+        text = "Продаж по заданным фильтрам не найдено."
+    else:
+        text = "📔 Журнал Продаж:"
+
+    keyboard = create_sales_journal_keyboard(sales, page, total_pages)
+    
+    try:
+        await message.edit_text(text, reply_markup=keyboard)
+    except TelegramBadRequest:
+        try:
+            await message.delete()
+        except TelegramBadRequest: pass
+        await message.answer(text, reply_markup=keyboard)
+
+async def show_product_edit_card(callback_or_message, product_id: int):
+    message = callback_or_message.message if isinstance(callback_or_message, CallbackQuery) else callback_or_message
+    async with async_session() as session:
+        product = await session.get(Product, product_id)
+    if not product:
+        if isinstance(callback_or_message, CallbackQuery):
+            await callback_or_message.answer("Товар не найден.", show_alert=True)
+        return
+    
+    text = (
+        f"<b>Название:</b> {escape(product.name)}\n"
+        f"<b>Закупочная цена:</b> {product.purchase_price:.2f} zł\n\n"
+        "Что вы хотите изменить?"
+    )
+    
+    await message.edit_text(text, parse_mode="HTML", reply_markup=get_product_edit_keyboard(product_id))
+
+def get_period_dates(period: str):
+    today = datetime.now().date()
+    start_date, end_date = None, None
+    if period == "today":
+        start_date = datetime.combine(today, datetime.min.time())
+        end_date = datetime.combine(today, datetime.max.time())
+    elif period == "week":
+        start_date = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time())
+        end_date = datetime.combine(start_date.date() + timedelta(days=6), datetime.max.time())
+    elif period == "month":
+        start_date = datetime.combine(today.replace(day=1), datetime.min.time())
+        next_month = start_date.replace(day=28) + timedelta(days=4)
+        end_date = datetime.combine(next_month - timedelta(days=next_month.day), datetime.max.time())
+    return start_date, end_date
+
+# --- ОБРАБОТЧИКИ ---
+
 @router.message(F.text == "⬅️ Отмена", StateFilter("*"))
 @router.message(Command("cancel"), StateFilter("*"))
 async def cancel_fsm_handler(message: Message, state: FSMContext):
@@ -40,66 +144,613 @@ async def handle_back_to_admin_panel(callback: CallbackQuery, state: FSMContext)
     await state.clear()
     await callback.message.edit_text("Админ-панель:", reply_markup=get_admin_panel_keyboard())
 
-# --- Главное меню админки ---
 @router.message(Command("admin"))
-async def show_admin_panel(message: Message):
-    await message.answer("Админ-панель:", reply_markup=get_admin_panel_keyboard())
+async def show_admin_panel_command(message: Message):
+    await show_admin_panel(message)
 
-# --- Отмена продажи (возврат) ---
-@router.callback_query(F.data == "process_return")
-async def process_return_start(callback: CallbackQuery, state: FSMContext):
+# --- Отчеты и Аналитика ---
+@router.callback_query(F.data == "reports_panel")
+async def reports_panel_handler(callback: CallbackQuery):
+    await callback.message.edit_text("Отчеты и Аналитика:", reply_markup=get_reports_panel_keyboard())
+
+@router.callback_query(F.data == "finance_summary_panel")
+async def finance_summary_panel_handler(callback: CallbackQuery):
+    await callback.message.edit_text("Выберите период для финансовой сводки:", reply_markup=get_finance_summary_keyboard())
+
+@router.callback_query(F.data.startswith("finance_period_"))
+async def show_finance_summary(callback: CallbackQuery):
+    period = callback.data.split("_")[-1]
+    
+    period_text_map = {
+        "today": "за сегодня", "week": "за эту неделю",
+        "month": "за этот месяц", "all": "за все время"
+    }
+    period_text = period_text_map.get(period)
+    start_date, end_date = get_period_dates(period)
+
     async with async_session() as session:
+        query = select(Sale).options(joinedload(Sale.stock_item).joinedload(Stock.product))
+        if start_date and end_date:
+            query = query.where(Sale.sale_date.between(start_date, end_date))
+        
+        all_sales = (await session.execute(query)).scalars().all()
+
+    confirmed_sales = [s for s in all_sales if s.is_confirmed]
+    unconfirmed_sales = [s for s in all_sales if not s.is_confirmed]
+
+    conf_revenue = sum(s.price for s in confirmed_sales)
+    conf_profit = sum(s.price - s.stock_item.product.purchase_price for s in confirmed_sales if s.stock_item.product.purchase_price > 0)
+    conf_sales_count = len(confirmed_sales)
+    
+    unconf_revenue = sum(s.price for s in unconfirmed_sales)
+    unconf_profit = sum(s.price - s.stock_item.product.purchase_price for s in unconfirmed_sales if s.stock_item.product.purchase_price > 0)
+    unconf_sales_count = len(unconfirmed_sales)
+    
+    response_text = (
+        f"📊 <b>Финансовая сводка {period_text}</b>\n\n"
+        f"<b>--- Подтвержденные ---</b>\n"
+        f"<b>Выручка:</b> {conf_revenue:.2f} zł\n"
+        f"<b>Чистая прибыль:</b> {conf_profit:.2f} zł\n"
+        f"<b>Количество:</b> {conf_sales_count} шт.\n\n"
+        f"<b>--- Ожидают подтверждения ---</b>\n"
+        f"<b>Потенциальная выручка:</b> {unconf_revenue:.2f} zł\n"
+        f"<b>Потенциальная прибыль:</b> {unconf_profit:.2f} zł\n"
+        f"<b>Количество:</b> {unconf_sales_count} шт."
+    )
+    
+    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=get_finance_summary_keyboard())
+
+@router.callback_query(F.data == "seller_report_start")
+async def seller_report_start(callback: CallbackQuery, state: FSMContext):
+    async with async_session() as session:
+        sellers = (await session.execute(select(User))).scalars().all()
+    keyboard = create_user_selection_keyboard(sellers, "select_seller_report")
+    await callback.message.edit_text("Выберите продавца для отчета:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("select_seller_report_"))
+async def seller_report_process(callback: CallbackQuery):
+    seller_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        seller = await session.get(User, seller_id)
+        
         stmt = (
             select(Sale)
             .options(joinedload(Sale.stock_item).joinedload(Stock.product))
-            .order_by(Sale.sale_date.desc())
+            .where(Sale.seller_id == seller_id)
         )
-        result = await session.execute(stmt)
-        all_sales = result.scalars().all()
+        all_sales = (await session.execute(stmt)).scalars().all()
 
-    if not all_sales:
-        await callback.answer("Еще не было ни одной продажи.", show_alert=True)
-        return
+    confirmed_sales = [s for s in all_sales if s.is_confirmed]
+    unconfirmed_sales = [s for s in all_sales if not s.is_confirmed]
 
-    sales_list_text = "Все зарегистрированные продажи:\n\n"
-    for sale in all_sales:
-        product_name = escape(sale.stock_item.product.name)
-        product_size = escape(sale.stock_item.size)
-        sales_list_text += (
-            f"🔹 <b>№{sale.id}</b> | {sale.sale_date.strftime('%d.%m.%Y')} | "
-            f"{product_name} ({product_size})\n"
-        )
+    conf_revenue = sum(s.price for s in confirmed_sales)
+    conf_profit = sum(s.price - s.stock_item.product.purchase_price for s in confirmed_sales if s.stock_item.product.purchase_price > 0)
     
-    await callback.message.answer(sales_list_text, parse_mode="HTML")
-    await callback.message.answer("Введите номер продажи для отмены (товар вернется на склад):", reply_markup=get_cancel_kb())
-    await state.set_state(AdminStates.return_sale_id)
+    unconf_revenue = sum(s.price for s in unconfirmed_sales)
+    unconf_profit = sum(s.price - s.stock_item.product.purchase_price for s in unconfirmed_sales if s.stock_item.product.purchase_price > 0)
+
+    response_text = (
+        f"<b>Отчет по продавцу: {escape(seller.username)}</b> (за все время)\n\n"
+        f"<b>--- Подтвержденные ---</b>\n"
+        f"<b>Выручка:</b> {conf_revenue:.2f} zł\n"
+        f"<b>Прибыль:</b> {conf_profit:.2f} zł\n"
+        f"<b>Количество:</b> {len(confirmed_sales)} шт.\n\n"
+        f"<b>--- Ожидают подтверждения ---</b>\n"
+        f"<b>Потенциальная выручка:</b> {unconf_revenue:.2f} zł\n"
+        f"<b>Потенциальная прибыль:</b> {unconf_profit:.2f} zł\n"
+        f"<b>Количество:</b> {len(unconfirmed_sales)} шт."
+    )
+    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=get_reports_panel_keyboard())
+
+@router.callback_query(F.data == "export_csv_start")
+async def export_csv_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(ReportStates.enter_csv_period)
+    await callback.message.answer(
+        "Введите период для экспорта в формате: <b>ДД.ММ.ГГГГ - ДД.ММ.ГГГГ</b>\n"
+        "Или отправьте 'все', чтобы выгрузить все продажи.",
+        parse_mode="HTML",
+        reply_markup=get_cancel_kb()
+    )
     await callback.answer()
 
-@router.message(AdminStates.return_sale_id)
-async def process_return_id(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Номер продажи должен быть числом. Попробуйте еще раз.")
-        return
-    
-    sale_id = int(message.text)
-    
-    async with async_session() as session:
-        sale_to_return = await session.get(Sale, sale_id)
-        if not sale_to_return:
-            await message.answer(f"Продажа с номером {sale_id} не найдена.", reply_markup=remove_kb())
-            await state.clear()
-            await show_admin_panel(message)
+@router.message(ReportStates.enter_csv_period)
+async def export_csv_process(message: Message, state: FSMContext):
+    start_date, end_date = None, None
+    if message.text.lower() != 'все':
+        try:
+            start_str, end_str = [d.strip() for d in message.text.split('-')]
+            start_date = datetime.strptime(start_str, "%d.%m.%Y")
+            end_date = datetime.strptime(end_str, "%d.%m.%Y").replace(hour=23, minute=59, second=59)
+        except ValueError:
+            await message.answer("Неверный формат. Попробуйте еще раз.")
             return
-            
-        stock_id = sale_to_return.stock_id
-        await session.execute(update(Stock).where(Stock.id == stock_id).values(is_available=True))
-        await session.delete(sale_to_return)
-        await session.commit()
 
-    await message.answer(f"Продажа №{sale_id} успешно отменена. Товар возвращен на склад.", reply_markup=remove_kb())
     await state.clear()
+    await message.answer("Готовлю отчет...", reply_markup=remove_kb())
+
+    async with async_session() as session:
+        query = (
+            select(Sale)
+            .options(
+                joinedload(Sale.stock_item).joinedload(Stock.product),
+                joinedload(Sale.seller)
+            )
+            .order_by(Sale.sale_date.asc())
+        )
+        if start_date and end_date:
+            query = query.where(Sale.sale_date.between(start_date, end_date))
+        
+        sales = (await session.execute(query)).scalars().all()
+
+    if not sales:
+        await message.answer("За указанный период нет продаж для экспорта.")
+        return
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    headers = [
+        "ID Продажи", "Дата", "Время", "Товар", "Размер", "Продавец", "Аккаунт",
+        "Цена продажи (zl)", "Закуп. цена (zl)", "Прибыль (zl)", "Статус", "Ссылка на этикетку"
+    ]
+    writer.writerow(headers)
+    
+    for sale in sales:
+        profit = sale.price - sale.stock_item.product.purchase_price
+        row = [
+            sale.id,
+            sale.sale_date.strftime('%Y-%m-%d'),
+            sale.sale_date.strftime('%H:%M:%S'),
+            sale.stock_item.product.name,
+            sale.stock_item.size,
+            sale.seller.username,
+            sale.account,
+            sale.price,
+            sale.stock_item.product.purchase_price,
+            profit,
+            "Подтверждена" if sale.is_confirmed else "Не подтверждена",
+            sale.label_link
+        ]
+        writer.writerow(row)
+    
+    output.seek(0)
+    file_data = BufferedInputFile(output.getvalue().encode('utf-8-sig'), filename="sales_report.csv")
+    await message.answer_document(file_data)
     await show_admin_panel(message)
 
+# --- Журнал Продаж и его фильтры ---
+@router.callback_query(F.data == "sales_journal_reset")
+async def sales_journal_reset_and_start(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show_sales_journal(callback, state)
+
+@router.callback_query(F.data == "sales_journal")
+async def sales_journal_show_filtered(callback: CallbackQuery, state: FSMContext):
+    await show_sales_journal(callback, state)
+
+@router.callback_query(F.data.startswith("journal_page_"))
+async def sales_journal_page_handler(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[-1])
+    await show_sales_journal(callback, state, page)
+
+@router.callback_query(F.data == "journal_filter")
+async def journal_filter_menu(callback: CallbackQuery, state: FSMContext):
+    filters = await state.get_data()
+    await callback.message.edit_text("Настройте фильтры:", reply_markup=get_journal_filter_keyboard(filters))
+
+@router.callback_query(F.data == "filter_reset")
+async def reset_filters(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("Фильтры сброшены.", show_alert=True)
+    filters = await state.get_data()
+    await callback.message.edit_text("Настройте фильтры:", reply_markup=get_journal_filter_keyboard(filters))
+
+@router.callback_query(F.data == "filter_period")
+async def filter_by_period_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(JournalFilterStates.enter_period)
+    await callback.message.edit_text("Введите период в формате: <b>ДД.ММ.ГГГГ - ДД.ММ.ГГГГ</b>\nИли одну дату: <b>ДД.ММ.ГГГГ</b>", parse_mode="HTML")
+    await callback.answer()
+
+@router.message(JournalFilterStates.enter_period)
+async def process_period_filter(message: Message, state: FSMContext):
+    try:
+        if '-' in message.text:
+            start_str, end_str = [d.strip() for d in message.text.split('-')]
+            start_date = datetime.strptime(start_str, "%d.%m.%Y")
+            end_date = datetime.strptime(end_str, "%d.%m.%Y").replace(hour=23, minute=59, second=59)
+        else:
+            date_str = message.text.strip()
+            start_date = datetime.strptime(date_str, "%d.%m.%Y")
+            end_date = start_date.replace(hour=23, minute=59, second=59)
+        
+        await state.update_data(start_date=start_date, end_date=end_date)
+    except ValueError:
+        await message.answer("Неверный формат даты. Попробуйте еще раз.")
+        return
+    
+    await state.set_state(None)
+    filters = await state.get_data()
+    await message.delete()
+    await message.answer("Фильтр по дате установлен.", reply_markup=get_journal_filter_keyboard(filters))
+
+@router.callback_query(F.data == "filter_seller")
+async def filter_by_seller_start(callback: CallbackQuery):
+    async with async_session() as session:
+        sellers = (await session.execute(select(User))).scalars().all()
+    keyboard = create_filter_selection_keyboard(sellers, "set_filter_seller", "username", "user_id")
+    await callback.message.edit_text("Выберите продавца:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("set_filter_seller_"))
+async def set_seller_filter(callback: CallbackQuery, state: FSMContext):
+    seller_id = int(callback.data.split("_")[-1])
+    await state.update_data(seller_id=seller_id)
+    filters = await state.get_data()
+    await callback.message.edit_text("Фильтр по продавцу установлен.", reply_markup=get_journal_filter_keyboard(filters))
+
+@router.callback_query(F.data == "filter_product")
+async def filter_by_product_start(callback: CallbackQuery):
+    async with async_session() as session:
+        products = (await session.execute(select(Product))).scalars().all()
+    keyboard = create_filter_selection_keyboard(products, "set_filter_product", "name", "id")
+    await callback.message.edit_text("Выберите товар:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("set_filter_product_"))
+async def set_product_filter(callback: CallbackQuery, state: FSMContext):
+    product_id = int(callback.data.split("_")[-1])
+    await state.update_data(product_id=product_id)
+    filters = await state.get_data()
+    await callback.message.edit_text("Фильтр по товару установлен.", reply_markup=get_journal_filter_keyboard(filters))
+
+@router.callback_query(F.data == "filter_account")
+async def filter_by_account_start(callback: CallbackQuery):
+    async with async_session() as session:
+        accounts = (await session.execute(select(Sale.account).where(Sale.account.isnot(None)).distinct())).scalars().all()
+    if not accounts:
+        await callback.answer("Еще не было продаж с указанием аккаунта.", show_alert=True)
+        return
+    keyboard = create_text_filter_selection_keyboard(accounts, "set_filter_account")
+    await callback.message.edit_text("Выберите аккаунт:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("set_filter_account_"))
+async def set_account_filter(callback: CallbackQuery, state: FSMContext):
+    account = callback.data.replace("set_filter_account_", "", 1)
+    await state.update_data(account=account)
+    filters = await state.get_data()
+    await callback.message.edit_text("Фильтр по аккаунту установлен.", reply_markup=get_journal_filter_keyboard(filters))
+
+@router.callback_query(F.data == "filter_status")
+async def filter_by_status_start(callback: CallbackQuery):
+    await callback.message.edit_text("Выберите статус:", reply_markup=get_status_filter_keyboard())
+
+@router.callback_query(F.data.startswith("set_filter_status_"))
+async def set_status_filter(callback: CallbackQuery, state: FSMContext):
+    status = callback.data.split("_")[-1] == "true"
+    await state.update_data(is_confirmed=status)
+    filters = await state.get_data()
+    await callback.message.edit_text("Фильтр по статусу установлен.", reply_markup=get_journal_filter_keyboard(filters))
+
+# --- Просмотр и управление деталями продажи ---
+@router.callback_query(F.data.startswith("view_sale_"))
+async def view_sale_details(callback: CallbackQuery):
+    sale_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        sale = (await session.execute(
+            select(Sale).options(
+                joinedload(Sale.stock_item).joinedload(Stock.product),
+                joinedload(Sale.seller)
+            ).where(Sale.id == sale_id)
+        )).scalar_one_or_none()
+
+    if not sale:
+        await callback.answer("Продажа не найдена.", show_alert=True)
+        return
+
+    status = "✅ Подтверждена" if sale.is_confirmed else "❌ Не подтверждена"
+    profit = sale.price - sale.stock_item.product.purchase_price
+    
+    text = (
+        f"<b>Продажа №{sale.id}</b>\n\n"
+        f"<b>Дата:</b> {sale.sale_date.strftime('%d.%m.%Y %H:%M')}\n"
+        f"<b>Товар:</b> {escape(sale.stock_item.product.name)} ({escape(sale.stock_item.size)})\n"
+        f"<b>Продавец:</b> {escape(sale.seller.username or str(sale.seller.user_id))}\n"
+        f"<b>Аккаунт:</b> {escape(sale.account or 'Не указан')}\n"
+        "----------------------------------\n"
+        f"<b>Цена продажи:</b> {sale.price:.2f} zł\n"
+        f"<b>Закуп. цена:</b> {sale.stock_item.product.purchase_price:.2f} zł\n"
+        f"<b>Прибыль:</b> {profit:.2f} zł\n"
+        "----------------------------------\n"
+        f"<b>Статус:</b> {status}\n"
+        f"<b>Ссылка на этикетку:</b> {escape(sale.label_link or 'Нет')}"
+    )
+    
+    keyboard = get_sale_details_keyboard(sale)
+    
+    await callback.message.delete()
+    try:
+        await callback.message.answer(text, parse_mode="HTML")
+        screenshot = FSInputFile(sale.screenshot_path)
+        await callback.message.answer_photo(photo=screenshot, reply_markup=keyboard)
+    except Exception as e:
+        await callback.message.answer(f"Не удалось загрузить скриншот: {e}", reply_markup=keyboard)
+    
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_confirm_sale_"))
+async def admin_confirm_sale_handler(callback: CallbackQuery, state: FSMContext):
+    sale_id = int(callback.data.split("_")[-1])
+    async with async_session() as session:
+        await session.execute(update(Sale).where(Sale.id == sale_id).values(is_confirmed=True))
+        await session.commit()
+    await callback.answer("Продажа подтверждена!", show_alert=True)
+    await callback.message.delete()
+    await show_sales_journal(callback, state)
+
+@router.callback_query(F.data.startswith("admin_return_sale_"))
+async def admin_return_sale_handler(callback: CallbackQuery, state: FSMContext):
+    sale_id = int(callback.data.split("_")[-1])
+    async with async_session() as session:
+        sale_to_return = await session.get(Sale, sale_id)
+        if sale_to_return:
+            stock_id = sale_to_return.stock_id
+            await session.execute(update(Stock).where(Stock.id == stock_id).values(is_available=True))
+            await session.delete(sale_to_return)
+            await session.commit()
+            await callback.answer("Продажа отменена, товар возвращен на склад.", show_alert=True)
+            await callback.message.delete()
+            await show_sales_journal(callback, state)
+        else:
+            await callback.answer("Продажа не найдена.", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin_delete_sale_"))
+async def admin_delete_sale_handler(callback: CallbackQuery, state: FSMContext):
+    sale_id = int(callback.data.split("_")[-1])
+    async with async_session() as session:
+        sale_to_delete = await session.get(Sale, sale_id)
+        if sale_to_delete:
+            await session.delete(sale_to_delete)
+            await session.commit()
+            await callback.answer("Запись о продаже удалена.", show_alert=True)
+            await callback.message.delete()
+            await show_sales_journal(callback, state)
+        else:
+            await callback.answer("Продажа не найдена.", show_alert=True)
+
+# --- Управление товарами ---
+@router.callback_query(F.data == "manage_products")
+async def manage_products_menu(callback: CallbackQuery):
+    await callback.message.edit_text("Управление товарами:", reply_markup=get_product_management_keyboard())
+
+@router.callback_query(F.data == "add_product")
+async def handle_add_product_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddProductStates.name)
+    await callback.message.answer("Введите название модели обуви:", reply_markup=get_cancel_kb())
+    await callback.answer()
+
+@router.message(AddProductStates.name)
+async def handle_product_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await message.answer("Отлично. Теперь отправьте главное фото товара:")
+    await state.set_state(AddProductStates.photo)
+
+@router.message(AddProductStates.photo, F.photo)
+async def handle_product_photo(message: Message, state: FSMContext):
+    photo_id = message.photo[-1].file_id
+    await state.update_data(photo_id=photo_id)
+    await message.answer("Фото принято. Теперь введите доступные размеры через запятую:")
+    await state.set_state(AddProductStates.sizes)
+
+@router.message(AddProductStates.photo)
+async def handle_product_photo_invalid(message: Message):
+    await message.answer("Это не фото. Пожалуйста, отправьте фото товара.")
+
+@router.message(AddProductStates.sizes)
+async def handle_product_sizes(message: Message, state: FSMContext):
+    sizes_text = message.text
+    sizes_list = [size.strip() for size in sizes_text.split(',')]
+    if not all(size.replace('.', '', 1).isdigit() for size in sizes_list):
+        await message.answer("Неправильный формат. Введите размеры числами через запятую.")
+        return
+    await state.update_data(sizes=sizes_list)
+    await message.answer("Размеры приняты. Теперь введите закупочную цену (себестоимость) в zł:")
+    await state.set_state(AddProductStates.purchase_price)
+
+@router.message(AddProductStates.purchase_price)
+async def handle_purchase_price(message: Message, state: FSMContext):
+    if not message.text.replace('.', '', 1).isdigit():
+        await message.answer("Цена должна быть числом. Попробуйте еще раз.")
+        return
+    
+    await state.update_data(purchase_price=float(message.text))
+    data = await state.get_data()
+    
+    try:
+        async with async_session() as session:
+            new_product = Product(
+                name=data.get('name'), 
+                photo_id=data.get('photo_id'),
+                purchase_price=data.get('purchase_price')
+            )
+            session.add(new_product)
+            await session.flush()
+            
+            for size in data.get('sizes', []):
+                session.add(Stock(product_id=new_product.id, size=size))
+            await session.commit()
+
+            # --- НАЧАЛО БЛОКА: Создаем папку для этикеток ---
+        labels_dir = f"labels/{new_product.id}"
+        os.makedirs(labels_dir, exist_ok=True)
+        # --- КОНЕЦ БЛОКА ---
+            
+        await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {e}", reply_markup=remove_kb())
+    finally:
+        await state.clear()
+        await show_admin_panel(message)
+# --- НАЧАЛО БЛОКА: Показать ID товаров ---
+
+@router.callback_query(F.data == "show_product_ids")
+async def show_product_ids_handler(callback: CallbackQuery):
+    async with async_session() as session:
+        products = (await session.execute(select(Product))).scalars().all()
+
+    if not products:
+        await callback.answer("В базе данных еще нет товаров.", show_alert=True)
+        return
+
+    response_text = "ID всех товаров:\n\n"
+    for product in products:
+        response_text += f"<b>ID: {product.id}</b> — {escape(product.name)}\n"
+
+    await callback.message.answer(response_text, parse_mode="HTML")
+    await callback.answer()
+
+# --- КОНЕЦ БЛОКА ---
+# --- Редактирование товара ---
+@router.callback_query(F.data == "edit_product")
+async def edit_product_start(callback: CallbackQuery):
+    async with async_session() as session:
+        products = (await session.execute(select(Product))).scalars().all()
+    if not products:
+        await callback.answer("Товаров для редактирования нет.", show_alert=True)
+        return
+    await callback.message.edit_text("Выберите товар для редактирования:", reply_markup=create_product_selection_keyboard(products))
+
+async def show_product_edit_card(callback_or_message, product_id: int):
+    message = callback_or_message.message if isinstance(callback_or_message, CallbackQuery) else callback_or_message
+    async with async_session() as session:
+        product = await session.get(Product, product_id)
+    if not product:
+        if isinstance(callback_or_message, CallbackQuery):
+            await callback_or_message.answer("Товар не найден.", show_alert=True)
+        return
+    
+    text = (
+        f"<b>Название:</b> {escape(product.name)}\n"
+        f"<b>Закупочная цена:</b> {product.purchase_price:.2f} zł\n\n"
+        "Что вы хотите изменить?"
+    )
+    
+    await message.edit_text(text, parse_mode="HTML", reply_markup=get_product_edit_keyboard(product_id))
+
+@router.callback_query(F.data.startswith("select_edit_product_"))
+async def select_product_to_edit(callback: CallbackQuery, state: FSMContext):
+    product_id = int(callback.data.split("_")[-1])
+    await state.update_data(edit_product_id=product_id)
+    await show_product_edit_card(callback, product_id)
+
+@router.callback_query(F.data.startswith("edit_name_"))
+async def edit_product_name_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditProductStates.new_name)
+    await callback.message.answer("Введите новое название товара:", reply_markup=get_cancel_kb())
+    await callback.answer()
+
+@router.message(EditProductStates.new_name)
+async def edit_product_name_process(message: Message, state: FSMContext):
+    data = await state.get_data()
+    product_id = data.get("edit_product_id")
+    new_name = message.text
+    
+    async with async_session() as session:
+        await session.execute(update(Product).where(Product.id == product_id).values(name=new_name))
+        await session.commit()
+    
+    await message.answer("Название успешно изменено.", reply_markup=remove_kb())
+    await state.clear()
+    await show_product_edit_card(message, product_id)
+
+@router.callback_query(F.data.startswith("edit_price_"))
+async def edit_product_price_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditProductStates.new_purchase_price)
+    await callback.message.answer("Введите новую закупочную цену (в zł):", reply_markup=get_cancel_kb())
+    await callback.answer()
+
+@router.message(EditProductStates.new_purchase_price)
+async def edit_product_price_process(message: Message, state: FSMContext):
+    if not message.text.replace('.', '', 1).isdigit():
+        await message.answer("Цена должна быть числом. Попробуйте еще раз.")
+        return
+    data = await state.get_data()
+    product_id = data.get("edit_product_id")
+    new_price = float(message.text)
+    
+    async with async_session() as session:
+        await session.execute(update(Product).where(Product.id == product_id).values(purchase_price=new_price))
+        await session.commit()
+        
+    await message.answer("Закупочная цена успешно изменена.", reply_markup=remove_kb())
+    await state.clear()
+    await show_product_edit_card(message, product_id)
+
+# --- НАЧАЛО БЛОКА: Поступление товара ---
+
+@router.callback_query(F.data == "add_stock")
+async def add_stock_start(callback: CallbackQuery, state: FSMContext):
+    async with async_session() as session:
+        products = (await session.execute(select(Product))).scalars().all()
+    if not products:
+        await callback.answer("Сначала добавьте хотя бы один товар.", show_alert=True)
+        return
+    
+    # Используем существующую клавиатуру для выбора товара, но с другим префиксом
+    keyboard = create_product_selection_keyboard(products).inline_keyboard
+    for row in keyboard:
+        for button in row:
+            if button.callback_data.startswith("select_edit_product_"):
+                button.callback_data = button.callback_data.replace("select_edit_product_", "select_stock_product_")
+    
+    await callback.message.edit_text("Выберите товар для пополнения остатков:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await state.set_state(AddStockStates.select_product)
+
+@router.callback_query(F.data.startswith("select_stock_product_"), AddStockStates.select_product)
+async def add_stock_select_product(callback: CallbackQuery, state: FSMContext):
+    product_id = int(callback.data.split("_")[-1])
+    await state.update_data(product_id=product_id)
+    
+    # Сначала удаляем старое сообщение с кнопками
+    await callback.message.delete()
+    
+    # Затем отправляем новое сообщение с клавиатурой отмены
+    await callback.message.answer(
+        "Введите размеры для добавления через запятую (например: 41, 42, 42, 43):",
+        reply_markup=get_cancel_kb()
+    )
+    await state.set_state(AddStockStates.enter_sizes)
+
+@router.message(AddStockStates.enter_sizes)
+async def add_stock_process_sizes(message: Message, state: FSMContext):
+    sizes_text = message.text
+    sizes_list = [size.strip() for size in sizes_text.split(',')]
+    if not all(size.replace('.', '', 1).isdigit() for size in sizes_list):
+        await message.answer("Неправильный формат. Введите размеры числами через запятую или нажмите 'Отмена'.")
+        return
+
+    data = await state.get_data()
+    product_id = data.get("product_id")
+
+    try:
+        async with async_session() as session:
+            product = await session.get(Product, product_id)
+            for size in sizes_list:
+                new_stock_item = Stock(product_id=product_id, size=size)
+                session.add(new_stock_item)
+            await session.commit()
+        
+        await message.answer(
+            f"Остатки для товара '{escape(product.name)}' успешно пополнены.\n"
+            f"Добавлены размеры: {', '.join(sizes_list)}",
+            reply_markup=remove_kb()
+        )
+    except Exception as e:
+        await message.answer(f"Произошла ошибка при добавлении размеров: {e}", reply_markup=remove_kb())
+    finally:
+        await state.clear()
+        await show_admin_panel(message)
+
+# --- КОНЕЦ БЛОКА ---        
 # --- Управление пользователями ---
 @router.callback_query(F.data == "manage_users")
 async def handle_manage_users(callback: CallbackQuery):
@@ -194,7 +845,7 @@ async def handle_manage_access_start(callback: CallbackQuery):
     if not users:
         await callback.answer("Нет пользователей для управления доступом.", show_alert=True)
         return
-    keyboard = create_user_selection_keyboard(users)
+    keyboard = create_user_selection_keyboard(users, "select_user_access")
     await callback.message.edit_text("Выберите пользователя для настройки доступа:", reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("select_user_access_"))
@@ -214,137 +865,24 @@ async def toggle_product_access(callback: CallbackQuery):
     user_id_str, product_id_str = parts[2], parts[3]
     user_id, product_id = int(user_id_str), int(product_id_str)
     async with async_session() as session:
-        access_entry = await session.execute(select(UserProductAccess).where(UserProductAccess.user_id == user_id, UserProductAccess.product_id == product_id)).scalar_one_or_none()
+        result = await session.execute(
+            select(UserProductAccess).where(
+                UserProductAccess.user_id == user_id,
+                UserProductAccess.product_id == product_id
+            )
+        )
+        access_entry = result.scalar_one_or_none()
         if access_entry:
             await session.delete(access_entry)
         else:
             session.add(UserProductAccess(user_id=user_id, product_id=product_id))
         await session.commit()
+        
         all_products = (await session.execute(select(Product))).scalars().all()
-        user_access_result = await session.execute(select(UserProductAccess.product_id).where(UserProductAccess.user_id == user_id))
+        user_access_result = await session.execute(
+            select(UserProductAccess.product_id).where(UserProductAccess.user_id == user_id)
+        )
         user_product_ids = set(user_access_result.scalars().all())
         keyboard = create_access_management_keyboard(user_id, all_products, user_product_ids)
         await callback.message.edit_reply_markup(reply_markup=keyboard)
     await callback.answer()
-
-# --- Управление товарами ---
-@router.callback_query(F.data == "add_product")
-async def handle_add_product_start(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AddProductStates.name)
-    await callback.message.answer("Введите название модели обуви:", reply_markup=get_cancel_kb())
-    await callback.answer()
-
-@router.message(AddProductStates.name)
-async def handle_product_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text)
-    await message.answer("Отлично. Теперь отправьте главное фото товара:")
-    await state.set_state(AddProductStates.photo)
-
-@router.message(AddProductStates.photo, F.photo)
-async def handle_product_photo(message: Message, state: FSMContext):
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo_id=photo_id)
-    await message.answer("Фото принято. Теперь введите доступные размеры через запятую:")
-    await state.set_state(AddProductStates.sizes)
-
-@router.message(AddProductStates.photo)
-async def handle_product_photo_invalid(message: Message):
-    await message.answer("Это не фото. Пожалуйста, отправьте фото товара.")
-
-@router.message(AddProductStates.sizes)
-async def handle_product_sizes(message: Message, state: FSMContext):
-    sizes_text = message.text
-    sizes_list = [size.strip() for size in sizes_text.split(',')]
-    if not all(size.replace('.', '', 1).isdigit() for size in sizes_list):
-        await message.answer("Неправильный формат. Введите размеры числами через запятую.")
-        return
-    data = await state.get_data()
-    try:
-        async with async_session() as session:
-            new_product = Product(name=data.get('name'), photo_id=data.get('photo_id'))
-            session.add(new_product)
-            await session.flush()
-            for size in sizes_list:
-                session.add(Stock(product_id=new_product.id, size=size))
-            await session.commit()
-        await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
-    except Exception as e:
-        await message.answer(f"Произошла ошибка: {e}", reply_markup=remove_kb())
-    finally:
-        await state.clear()
-        await show_admin_panel(message)
-
-# --- Отчеты и управление продажами ---
-@router.callback_query(F.data == "sales_management")
-async def handle_sales_management(callback: CallbackQuery):
-    await callback.message.edit_text("Отчеты и Продажи:", reply_markup=get_sales_management_keyboard())
-
-@router.callback_query(F.data == "report_summary")
-async def handle_report_summary(callback: CallbackQuery):
-    async with async_session() as session:
-        stmt = select(func.count(Sale.id), func.sum(Sale.price))
-        result = await session.execute(stmt)
-        total_sales, total_revenue = result.one()
-    response_text = "Общая статистика:\n\n"
-    response_text += f"Всего продаж: <b>{total_sales or 0}</b>\n"
-    response_text += f"Общая сумма продаж: <b>{total_revenue or 0:.2f}</b>"
-    await callback.message.answer(response_text, parse_mode="HTML")
-    await callback.answer()
-
-@router.callback_query(F.data == "report_last_10")
-async def handle_report_last_10(callback: CallbackQuery):
-    async with async_session() as session:
-        stmt = (
-            select(Sale)
-            .options(joinedload(Sale.stock_item).joinedload(Stock.product), joinedload(Sale.seller))
-            .order_by(Sale.sale_date.desc()).limit(10)
-        )
-        result = await session.execute(stmt)
-        last_sales = result.scalars().all()
-    if not last_sales:
-        await callback.message.answer("Еще не было ни одной продажи.")
-        return
-    await callback.message.answer("Последние 10 продаж:")
-    for sale in last_sales:
-        status = "✅ Подтверждена" if sale.is_confirmed else "❌ Не подтверждена"
-        seller_name = escape(sale.seller.username or f"ID: {sale.seller.user_id}")
-        product_name = escape(sale.stock_item.product.name)
-        product_size = escape(sale.stock_item.size)
-        label_link = escape(sale.label_link)
-        
-        response_text = (
-            f"<b>Продажа №{sale.id}</b> от {sale.sale_date.strftime('%d.%m.%Y %H:%M')} | <b>{status}</b>\n"
-            f"Товар: {product_name} (размер: {product_size})\n"
-            f"Продавец: {seller_name}\n"
-            f"Цена: {sale.price:.2f}\n"
-            f"Ссылка на этикетку: {label_link}"
-        )
-        try:
-            screenshot = FSInputFile(sale.screenshot_path)
-            await callback.message.answer_photo(photo=screenshot, caption=response_text, parse_mode="HTML")
-        except Exception as e:
-            await callback.message.answer(f"{response_text}\n\n(Не удалось загрузить скриншот: {escape(str(e))})", parse_mode="HTML")
-    await callback.answer()
-
-@router.callback_query(F.data == "delete_sale_start")
-async def delete_sale_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("Введите номер продажи для удаления (это действие не вернет товар на склад):", reply_markup=get_cancel_kb())
-    await state.set_state(AdminStates.delete_sale_id)
-    await callback.answer()
-
-@router.message(AdminStates.delete_sale_id)
-async def delete_sale_process(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Номер продажи должен быть числом. Попробуйте еще раз.")
-        return
-    sale_id = int(message.text)
-    async with async_session() as session:
-        sale_to_delete = await session.get(Sale, sale_id)
-        if sale_to_delete:
-            await session.delete(sale_to_delete)
-            await session.commit()
-            await message.answer(f"Продажа №{sale_id} успешно удалена.", reply_markup=remove_kb())
-        else:
-            await message.answer(f"Продажа с номером {sale_id} не найдена.", reply_markup=remove_kb())
-    await state.clear()
-    await show_admin_panel(message)

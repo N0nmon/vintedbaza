@@ -11,6 +11,9 @@ from db.models import User
 from middlewares.access_control import AccessControlMiddleware
 from handlers import common_handlers, admin_handlers
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from utils.scheduler import check_unconfirmed_sales
+
 async def on_startup():
     # Создаем папку для медиа, если ее нет
     if not os.path.exists('media'):
@@ -36,6 +39,13 @@ async def main():
     dp.include_router(admin_handlers.router)
     dp.include_router(common_handlers.router)
     
+    # --- НАЧАЛО БЛОКА: Код планировщика ---
+    scheduler = AsyncIOScheduler(timezone="Europe/Warsaw")
+    # Запускаем проверку каждый день в 11:00 по Варшаве
+    scheduler.add_job(check_unconfirmed_sales, 'cron', hour=15, minute=0, kwargs={'bot': bot})
+    scheduler.start()
+    # --- КОНЕЦ БЛОКА ---
+
     await on_startup()
     await dp.start_polling(bot)
 

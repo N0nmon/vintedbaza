@@ -17,6 +17,7 @@ class Product(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     photo_id: Mapped[str] = mapped_column(String, nullable=False)
+    purchase_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default='0.0')
 
 class Stock(Base):
     __tablename__ = 'stock'
@@ -32,10 +33,10 @@ class Sale(Base):
     stock_id: Mapped[int] = mapped_column(ForeignKey('stock.id'))
     seller_id: Mapped[int] = mapped_column(ForeignKey('users.user_id'))
     price: Mapped[float] = mapped_column(Float, nullable=False)
+    account: Mapped[str] = mapped_column(String(100), nullable=True) # –ù–æ–≤–æ–µ –ø–æ–ª–µ
     label_link: Mapped[str] = mapped_column(String, nullable=True)
     screenshot_path: Mapped[str] = mapped_column(String, nullable=True)
     sale_date: Mapped[datetime] = mapped_column(DateTime, default=func.now())
-    # »«Ã≈Õ≈Õ»≈: ƒÓ·‡‚ÎˇÂÏ server_default='0' ‰Îˇ SQLite
     is_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='0')
     stock_item: Mapped["Stock"] = relationship(back_populates=None, lazy="joined")
     seller: Mapped["User"] = relationship(back_populates=None, lazy="joined")

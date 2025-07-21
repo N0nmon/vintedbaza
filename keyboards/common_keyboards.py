@@ -8,7 +8,8 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text="Просмотреть остатки 📦")],
         [KeyboardButton(text="Зарегистрировать продажу 💸")],
-        [KeyboardButton(text="Мои продажи 📋")]
+        [KeyboardButton(text="Мои продажи 📋")],
+        [KeyboardButton(text="Получить этикетку 🏷️")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     return keyboard
@@ -76,3 +77,18 @@ def create_sizes_keyboard(sizes: list, product_id: int) -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="cancel_action")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
+
+# --- НАЧАЛО БЛОКА: Новая клавиатура для выбора размера этикетки ---
+def create_label_sizes_keyboard(sizes: list[str], product_id: int) -> InlineKeyboardMarkup:
+    """
+    Создает inline-клавиатуру с размерами, для которых есть этикетки.
+    """
+    buttons = []
+    for size in sorted(sizes): # Сортируем размеры для порядка
+        button = InlineKeyboardButton(text=f"Размер: {size}", callback_data=f"get_label_{product_id}_{size}")
+        buttons.append([button])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="cancel_action")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return keyboard
+# --- КОНЕЦ БЛОКА ---

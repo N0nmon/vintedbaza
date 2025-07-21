@@ -9,13 +9,30 @@ class AdminStates(StatesGroup):
     # Состояние для управления доступом
     manage_access_user_id = State()
 
-    # Состояние для возврата товара
-    return_sale_id = State()
-
-    # Состояние для удаления продажи
-    delete_sale_id = State()
-
 class AddProductStates(StatesGroup):
     name = State()
     photo = State()
     sizes = State()
+    purchase_price = State()
+
+class EditProductStates(StatesGroup):
+    select_product = State()
+    select_action = State()
+    new_name = State()
+    new_purchase_price = State()
+
+class JournalFilterStates(StatesGroup):
+    enter_period = State()
+    select_seller = State()
+    select_product = State()
+    select_account = State()
+    select_status = State()
+
+class ReportStates(StatesGroup):
+    select_seller_for_report = State()
+    select_period_for_seller_report = State()
+    enter_csv_period = State()
+
+class AddStockStates(StatesGroup):
+    select_product = State()
+    enter_sizes = State()
