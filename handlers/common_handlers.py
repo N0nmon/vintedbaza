@@ -331,14 +331,19 @@ async def get_label_send_file(callback: CallbackQuery):
     print(f"[DEBUG] Директория для поиска этикетки: {labels_dir}")
 
     label_path = None
-    for ext in ['.jpg', '.jpeg', '.png', '.pdf']:
-        path = os.path.join(labels_dir, f"{size}{ext}")
-        print(f"[DEBUG] Проверяем наличие файла: {path}")
-        if os.path.exists(path):
-            label_path = path
-            print(f"[DEBUG] Файл найден: {label_path}")
-            break
-    
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.pdf']  # Список допустимых расширений
+
+    if os.path.exists(labels_dir):
+        print(f"[DEBUG] Директория {labels_dir} существует. Сканируем файлы...")
+        for filename in os.listdir(labels_dir):
+            file_ext = os.path.splitext(filename)[1].lower()  # Приводим расширение к нижнему регистру
+            if filename.startswith(size) and file_ext in valid_extensions:
+                label_path = os.path.join(labels_dir, filename)
+                print(f"[DEBUG] Файл найден: {label_path}")
+                break
+    else:
+        print(f"[DEBUG] Директория {labels_dir} не существует.")
+
     if label_path:
         print(f"[DEBUG] Отправляем файл этикетки: {label_path}")
         await callback.message.answer_document(FSInputFile(label_path))
