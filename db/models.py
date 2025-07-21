@@ -48,3 +48,21 @@ class UserProductAccess(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey('products.id', ondelete="CASCADE"))
     
     __table_args__ = (UniqueConstraint('user_id', 'product_id', name='_user_product_uc'),)
+
+# --- НАЧАЛО БЛОКА: Обновленный класс PlatformAccount ---
+class PlatformAccount(Base):
+    __tablename__ = 'platform_accounts'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Имя для отображения (например, "7b")
+    display_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    # Имя для поиска в теле письма (например, "Vinted_МойАкк")
+    search_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+# --- КОНЕЦ БЛОКА ---
+
+class AccountAssignment(Base):
+    __tablename__ = 'account_assignments'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.user_id', ondelete="CASCADE"))
+    account_id: Mapped[int] = mapped_column(ForeignKey('platform_accounts.id', ondelete="CASCADE"))
+
+    __table_args__ = (UniqueConstraint('user_id', 'account_id', name='_user_account_uc'),)

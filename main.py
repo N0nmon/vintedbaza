@@ -13,6 +13,7 @@ from handlers import common_handlers, admin_handlers
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from utils.scheduler import check_unconfirmed_sales
+from utils.gmail_checker import check_gmail
 
 async def on_startup():
     # Создаем папку для медиа, если ее нет
@@ -42,7 +43,8 @@ async def main():
     # --- НАЧАЛО БЛОКА: Код планировщика ---
     scheduler = AsyncIOScheduler(timezone="Europe/Warsaw")
     # Запускаем проверку каждый день в 11:00 по Варшаве
-    scheduler.add_job(check_unconfirmed_sales, 'cron', hour=15, minute=0, kwargs={'bot': bot})
+    scheduler.add_job(check_unconfirmed_sales, 'cron', hour=15, minute=0, kwargs={'bot': bot}) # Проверка неподтвержденных продаж каждый день в 15:00 по Варшаве
+    scheduler.add_job(check_gmail, 'interval', minutes=1, kwargs={'bot': bot}) # Проверка почты каждую минуту
     scheduler.start()
     # --- КОНЕЦ БЛОКА ---
 

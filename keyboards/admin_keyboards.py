@@ -1,6 +1,6 @@
 from html import escape
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from db.models import Product, User, Sale
+from db.models import Product, User, Sale, PlatformAccount
 
 def get_admin_panel_keyboard() -> InlineKeyboardMarkup:
     buttons = [
@@ -9,6 +9,7 @@ def get_admin_panel_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Управление товарами 📦", callback_data="manage_products")],
         [InlineKeyboardButton(text="Управление пользователями 👥", callback_data="manage_users")],
         [InlineKeyboardButton(text="Управление доступом 🔑", callback_data="manage_access")],
+        [InlineKeyboardButton(text="Управление Аккаунтами 📧", callback_data="manage_accounts")],
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
@@ -119,15 +120,16 @@ def get_product_management_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Поступление товара", callback_data="add_stock")],
         [InlineKeyboardButton(text="Редактировать товар", callback_data="edit_product")],
         [InlineKeyboardButton(text="Показать ID товаров", callback_data="show_product_ids")],
+        [InlineKeyboardButton(text="Синхронизировать папки этикеток", callback_data="sync_label_folders")],
         [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="back_to_admin_panel")]
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
 
-def create_product_selection_keyboard(products: list[Product]) -> InlineKeyboardMarkup:
+def create_product_selection_keyboard(products: list[Product], prefix: str) -> InlineKeyboardMarkup:
     buttons = []
     for product in products:
-        buttons.append([InlineKeyboardButton(text=product.name, callback_data=f"select_edit_product_{product.id}")])
+        buttons.append([InlineKeyboardButton(text=product.name, callback_data=f"{prefix}_{product.id}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_products")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
@@ -173,3 +175,29 @@ def create_access_management_keyboard(user_id: int, all_products: list, user_pro
     buttons.append([InlineKeyboardButton(text="⬅️ Назад к выбору пользователя", callback_data="manage_access")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
+
+def get_account_management_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="Добавить аккаунт", callback_data="add_platform_account")],
+        [InlineKeyboardButton(text="Назначить ответственного", callback_data="assign_account_user")],
+        [InlineKeyboardButton(text="Удалить аккаунт", callback_data="delete_platform_account")],
+        [InlineKeyboardButton(text="Снять ответственного", callback_data="remove_assignment")],
+        [InlineKeyboardButton(text="Список аккаунтов и ответственных", callback_data="list_accounts")],
+        [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="back_to_admin_panel")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def create_account_selection_keyboard(accounts: list[PlatformAccount], callback_prefix: str) -> InlineKeyboardMarkup:
+    buttons = []
+    for acc in accounts:
+        buttons.append([InlineKeyboardButton(text=f"{acc.display_name}", callback_data=f"{callback_prefix}_{acc.id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_accounts")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def create_assignment_selection_keyboard(assignments: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for assignment_id, acc_name, user_name in assignments:
+        text = f"{escape(user_name)} -> {escape(acc_name)}"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=f"delete_assignment_{assignment_id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_accounts")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
