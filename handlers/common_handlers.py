@@ -327,29 +327,30 @@ async def get_label_send_file(callback: CallbackQuery):
     product_id = int(parts[2])
     size = parts[3]
     labels_dir = f"labels/{product_id}"
-    print(f"[DEBUG] Пользователь запросил этикетку для товара {product_id}, размер {size}.")
-    print(f"[DEBUG] Директория для поиска этикетки: {labels_dir}")
+    # print(f"[DEBUG] Пользователь запросил этикетку для товара {product_id}, размер {size}.")
+    # print(f"[DEBUG] Директория для поиска этикетки: {labels_dir}")
 
     label_path = None
     valid_extensions = ['.jpg', '.jpeg', '.png', '.pdf']  # Список допустимых расширений
 
     if os.path.exists(labels_dir):
-        print(f"[DEBUG] Директория {labels_dir} существует. Сканируем файлы...")
+        # print(f"[DEBUG] Директория {labels_dir} существует. Сканируем файлы...")
         for filename in os.listdir(labels_dir):
             file_ext = os.path.splitext(filename)[1].lower()  # Приводим расширение к нижнему регистру
             if filename.startswith(size) and file_ext in valid_extensions:
                 label_path = os.path.join(labels_dir, filename)
-                print(f"[DEBUG] Файл найден: {label_path}")
+                # print(f"[DEBUG] Файл найден: {label_path}")
                 break
     else:
-        print(f"[DEBUG] Директория {labels_dir} не существует.")
+        # print(f"[DEBUG] Директория {labels_dir} не существует.")
+        pass
 
     if label_path:
-        print(f"[DEBUG] Отправляем файл этикетки: {label_path}")
+        # print(f"[DEBUG] Отправляем файл этикетки: {label_path}")
         await callback.message.answer_document(FSInputFile(label_path))
         await callback.answer()
     else:
-        print(f"[DEBUG] Файл этикетки для товара {product_id}, размер {size} не найден.")
+        # print(f"[DEBUG] Файл этикетки для товара {product_id}, размер {size} не найден.")
         await callback.answer("Файл этикетки для этого размера не найден.", show_alert=True)
     
     await callback.message.delete()
