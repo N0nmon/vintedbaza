@@ -280,33 +280,45 @@ async def enter_screenshot(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(F.text == "Получить этикетку 🏷️")
 async def get_label_start(message: Message, user: User):
+    print(f"[DEBUG] Пользователь {user.user_id} запросил получение этикетки.")
     async with async_session() as session:
         products = await get_allowed_products(session, user)
+        print(f"[DEBUG] Доступные товары для пользователя {user.user_id}: {products}")
     
     if not products:
+        print(f"[DEBUG] Для пользователя {user.user_id} нет доступных товаров.")
         await message.answer("Для вас нет доступных товаров.")
         return
     
     keyboard = create_products_keyboard(products, action="label_product")
+    print(f"[DEBUG] Клавиатура для выбора товаров создана: {keyboard}")
     await message.answer("Выберите товар, для которого нужна этикетка:", reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("label_product_"))
 async def get_label_select_product(callback: CallbackQuery):
     product_id = int(callback.data.split("_")[-1])
+    print(f"[DEBUG] Пользователь выбрал товар с ID: {product_id}")
     labels_dir = f"labels/{product_id}"
+    print(f"[DEBUG] Директория для этикеток: {labels_dir}")
     
     available_sizes = []
     if os.path.exists(labels_dir):
+        print(f"[DEBUG] Директория {labels_dir} существует. Сканируем файлы...")
         for filename in os.listdir(labels_dir):
             size = os.path.splitext(filename)[0]
             if size.replace('.', '', 1).isdigit():
                 available_sizes.append(size)
+                print(f"[DEBUG] Найден доступный размер: {size}")
+    else:
+        print(f"[DEBUG] Директория {labels_dir} не существует.")
 
     if not available_sizes:
+        print(f"[DEBUG] Для товара {product_id} нет доступных этикеток.")
         await callback.answer("Для этого товара еще не загружены этикетки.", show_alert=True)
         return
 
     keyboard = create_label_sizes_keyboard(available_sizes, product_id)
+    print(f"[DEBUG] Клавиатура для выбора размеров создана: {keyboard}")
     await callback.message.edit_text("Выберите размер:", reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("get_label_"))
@@ -315,18 +327,24 @@ async def get_label_send_file(callback: CallbackQuery):
     product_id = int(parts[2])
     size = parts[3]
     labels_dir = f"labels/{product_id}"
+    print(f"[DEBUG] Пользователь запросил этикетку для товара {product_id}, размер {size}.")
+    print(f"[DEBUG] Директория для поиска этикетки: {labels_dir}")
 
     label_path = None
     for ext in ['.jpg', '.jpeg', '.png', '.pdf']:
         path = os.path.join(labels_dir, f"{size}{ext}")
+        print(f"[DEBUG] Проверяем наличие файла: {path}")
         if os.path.exists(path):
             label_path = path
+            print(f"[DEBUG] Файл найден: {label_path}")
             break
     
     if label_path:
+        print(f"[DEBUG] Отправляем файл этикетки: {label_path}")
         await callback.message.answer_document(FSInputFile(label_path))
         await callback.answer()
     else:
+        print(f"[DEBUG] Файл этикетки для товара {product_id}, размер {size} не найден.")
         await callback.answer("Файл этикетки для этого размера не найден.", show_alert=True)
     
     await callback.message.delete()
