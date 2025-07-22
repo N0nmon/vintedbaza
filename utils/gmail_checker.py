@@ -83,10 +83,8 @@ def get_body_text(payload):
     return ""
 
 async def check_gmail(bot: Bot):
-    # print(f"\n[{datetime.now()}] Running Gmail check...")
     service = get_gmail_service()
     if not service:
-        # print(f"[{datetime.now()}] EXIT: Failed to get Gmail service.")
         return
 
     async with async_session() as session:
@@ -104,20 +102,14 @@ async def check_gmail(bot: Bot):
         search_name_to_users_map[search_name]['users'].append(user_id)
 
     if not search_name_to_users_map:
-        # print("No accounts configured for monitoring.")
         return
-        
-    # print(f"--- DEBUG: Tracking search names: {list(search_name_to_users_map.keys())}")
 
     try:
         results = service.users().messages().list(userId="me", q="is:unread").execute()
         messages = results.get("messages", [])
 
         if not messages:
-            # print("No new messages found.")
             return
-
-        # print(f"Found {len(messages)} new messages. Processing...")
 
         for message_info in messages:
             msg_id = message_info["id"]
@@ -130,8 +122,6 @@ async def check_gmail(bot: Bot):
                 body_text = get_body_text(payload)
 
                 if not body_text:
-                    # print(f"--- Email ID: {msg_id} has no text body. Marking as read.")
-                    # Помечаем как прочитанное, даже если пустое
                     service.users().messages().modify(userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}).execute()
                     continue
 
@@ -140,11 +130,6 @@ async def check_gmail(bot: Bot):
                     if re.search(r'\b' + re.escape(search_name) + r'\b', body_text, re.IGNORECASE):
                         found_account_search_name = search_name
                         break
-                
-                # print(f"--- DEBUG: Checking email ID: {msg_id} ---")
-                # print(f"Subject: {subject}")
-                # print(f"Found account search_name in body: {found_account_search_name}")
-                # print("---------------------------------")
 
                 notification_sent = False
                 if found_account_search_name:
@@ -154,29 +139,31 @@ async def check_gmail(bot: Bot):
                     
                     for keyword, event_type in KEYWORDS.items():
                         if keyword in subject:
-                            # print(f"MATCH FOUND! Account: {display_name}, Event: {event_type}")
-                            notification_text = f"{event_type} на аккаунте <b>{escape(display_name)}</b>!"
+                            # Если это сообщение, извлекаем текст после "Nowa wiadomość:"
+                            if event_type == "💬 Новое сообщение":
+                                message_match = re.search(r"Nowa wiadomość:\s*(.+)", body_text, re.DOTALL)
+                                message_text = message_match.group(1).strip() if message_match else "Текст сообщения не найден."
+                                notification_text = (
+                                    f"{event_type} на аккаунте <b>{escape(display_name)}</b>!\n\n"
+                                    f"Сообщение: <i>{escape(message_text)}</i>"
+                                )
+                            else:
+                                notification_text = f"{event_type} на аккаунте <b>{escape(display_name)}</b>!"
                             
                             for user_id in recipient_users:
                                 try:
                                     await bot.send_message(chat_id=user_id, text=notification_text, parse_mode="HTML")
-                                    notification_sent = True # Уведомление успешно отправлено хотя бы одному
-                                except Exception as e:
-                                    # print(f"Failed to send notification to user {user_id}: {e}")
+                                    notification_sent = True
+                                except Exception:
                                     pass
-                            
-                            break # Выходим из цикла по ключевым словам
+                            break
                 
-                # Помечаем как прочитанное ЛЮБОЕ обработанное письмо
                 service.users().messages().modify(
                     userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}
                 ).execute()
-                # print(f"Email ID: {msg_id} marked as read.")
 
-            except Exception as e:
-                # print(f"An error occurred while processing message ID {msg_id}: {e}")
+            except Exception:
                 pass
 
-    except Exception as e:
-        # print(f"An error occurred while checking Gmail: {e}")
+    except Exception:
         pass
