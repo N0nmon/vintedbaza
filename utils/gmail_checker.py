@@ -141,7 +141,8 @@ async def check_gmail(bot: Bot):
                         if keyword in subject:
                             # Если это сообщение, извлекаем текст после "Nowa wiadomość:"
                             if event_type == "💬 Новое сообщение":
-                                message_match = re.search(r"Nowa wiadomość:\s*(.+)", body_text, re.DOTALL)
+                                # Извлекаем текст сообщения между "Nowa wiadomość:" и первым разделителем
+                                message_match = re.search(r"Nowa wiadomość:\s*(.+?)(?:\n|$)", body_text, re.DOTALL)
                                 message_text = message_match.group(1).strip() if message_match else "Текст сообщения не найден."
                                 notification_text = (
                                     f"{event_type} на аккаунте <b>{escape(display_name)}</b>!\n\n"
