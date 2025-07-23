@@ -715,14 +715,10 @@ async def add_stock_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала добавьте хотя бы один товар.", show_alert=True)
         return
     
-    # Используем существующую клавиатуру для выбора товара, но с другим префиксом
-    keyboard = create_product_selection_keyboard(products).inline_keyboard
-    for row in keyboard:
-        for button in row:
-            if button.callback_data.startswith("select_edit_product_"):
-                button.callback_data = button.callback_data.replace("select_edit_product_", "select_stock_product_")
+    # Исправлено: Передаем правильный префикс в функцию создания клавиатуры
+    keyboard = create_product_selection_keyboard(products, prefix="select_stock_product")
     
-    await callback.message.edit_text("Выберите товар для пополнения остатков:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await callback.message.edit_text("Выберите товар для пополнения остатков:", reply_markup=keyboard)
     await state.set_state(AddStockStates.select_product)
 
 @router.callback_query(F.data.startswith("select_stock_product_"), AddStockStates.select_product)
