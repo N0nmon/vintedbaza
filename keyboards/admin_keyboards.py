@@ -201,3 +201,12 @@ def create_assignment_selection_keyboard(assignments: list) -> InlineKeyboardMar
         buttons.append([InlineKeyboardButton(text=text, callback_data=f"delete_assignment_{assignment_id}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_accounts")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+@router.callback_query(F.data == "add_stock")
+async def add_stock_start(callback: CallbackQuery):
+    async with async_session() as session:
+        products = (await session.execute(select(Product))).scalars().all()
+    
+    # Передаем префикс "add_stock"
+    keyboard = create_product_selection_keyboard(products, prefix="add_stock").inline_keyboard
+    await callback.message.edit_text("Выберите товар для добавления поступления:", reply_markup=keyboard)
