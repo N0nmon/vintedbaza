@@ -384,31 +384,38 @@ async def cmd_tasks_summary(message: Message, user: User):
                 products_by_user[user_id] = []
             products_by_user[user_id].append(prod)
 
-        # 4. Формируем и отправляем отчет
-        final_report = "<b>Полная сводка по таблице:</b>\n\n"
+        # 4. Формируем и отправляем отчет с "умным" разделением
+        # Устанавливаем лимит Telegram
+        TELEGRAM_MESSAGE_LIMIT = 4096
+        
+        # Начинаем первое сообщение с заголовка
+        message_part = "<b>Полная сводка по таблице:</b>\n\n"
         
         for pg_user_id, user_products in products_by_user.items():
-            # Заголовок для каждого пользователя
-            final_report += f"👤 <b>Пользователь <code>{pg_user_id}</code>:</b>\n"
-            
+            # Сначала формируем блок для текущего пользователя
+            user_block = f"👤 <b>Пользователь <code>{pg_user_id}</code>:</b>\n"
             for prod in user_products:
                 platform_id = prod['is_active']
                 product_name = platform_id_to_name_map.get(platform_id, f"Неизвестный товар ({platform_id})")
                 size = prod['size']
                 task_id = prod['id']
-                
-                # Формируем аккуратную строку с отступом и чистым HTML
-                final_report += f"  • {escape(product_name)} (размер: {size}) - <b>ID:</b> <code>{task_id}</code>\n"
-            
-            # Добавляем пустую строку для визуального разделения между пользователями
-            final_report += "\n"
+                user_block += f"  • {escape(product_name)} (размер: {size}) - <b>ID:</b> <code>{task_id}</code>\n"
+            user_block += "\n" # Пустая строка после блока пользователя
 
-        # Разбиваем сообщение на части, если оно слишком длинное
-        if len(final_report) > 4096:
-            for x in range(0, len(final_report), 4096):
-                await message.answer(final_report[x:x+4096], parse_mode="HTML")
-        else:
-            await message.answer(final_report, parse_mode="HTML")
+            # Проверяем, не превысит ли добавление нового блока лимит
+            if len(message_part) + len(user_block) > TELEGRAM_MESSAGE_LIMIT:
+                # Если превысит, отправляем то, что уже есть
+                await message.answer(message_part, parse_mode="HTML")
+                # И начинаем новое сообщение с текущего блока
+                message_part = user_block
+            else:
+                # Если не превысит, просто добавляем блок к текущему сообщению
+                message_part += user_block
+
+        # После завершения цикла нужно отправить оставшуюся часть сообщения,
+        # если она не пустая (и не состоит только из заголовка)
+        if message_part and message_part != "<b>Полная сводка по таблице:</b>\n\n":
+            await message.answer(message_part, parse_mode="HTML")
 
     except Exception as e:
         await message.answer(f"❌ Произошла ошибка при получении данных: {e}")
