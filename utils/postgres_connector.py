@@ -23,7 +23,7 @@ async def fetch_all_products_from_postgres():
     """
     pool = await get_pg_pool()
     # --- ИЗМЕНЕННЫЙ ЗАПРОС: УБРАНО 'WHERE status = ...' ---
-    query = "SELECT id, user_id, is_active, size, status FROM public.products ORDER BY user_id"
+    query = "SELECT id, user_id, is_active, size FROM public.products ORDER BY user_id, is_active, id"
     # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     async with pool.acquire() as connection:
         rows = await connection.fetch(query)

@@ -388,18 +388,19 @@ async def cmd_tasks_summary(message: Message, user: User):
         final_report = "<b>Полная сводка по таблице:</b>\n\n"
         
         for pg_user_id, user_products in products_by_user.items():
-            final_report += f"👤 **Пользователь <code>{pg_user_id}</code>:**\n"
+            # Заголовок для каждого пользователя
+            final_report += f"👤 <b>Пользователь <code>{pg_user_id}</code>:</b>\n"
+            
             for prod in user_products:
                 platform_id = prod['is_active']
                 product_name = platform_id_to_name_map.get(platform_id, f"Неизвестный товар ({platform_id})")
                 size = prod['size']
                 task_id = prod['id']
-                status = prod['status'] # Добавили вывод статуса
                 
-                # Определяем иконку для статуса для наглядности
-                status_icon = "✅" if status == 'done' else "⚙️" if status == 'processing' else "❓"
-                
-                final_report += f"  {status_icon} {escape(product_name)} (р: {size}), ст: {escape(status)} - **ID: {task_id}**\n"
+                # Формируем аккуратную строку с отступом и чистым HTML
+                final_report += f"  • {escape(product_name)} (размер: {size}) - <b>ID:</b> <code>{task_id}</code>\n"
+            
+            # Добавляем пустую строку для визуального разделения между пользователями
             final_report += "\n"
 
         # Разбиваем сообщение на части, если оно слишком длинное
