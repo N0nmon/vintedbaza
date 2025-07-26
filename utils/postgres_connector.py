@@ -29,7 +29,7 @@ async def fetch_all_products_from_postgres():
         rows = await connection.fetch(query)
     return rows
 
-    async def fetch_product_tasks_from_postgres(platform_id: str):
+async def fetch_product_tasks_from_postgres(platform_id: str):
     """
     Запрашивает из PostgreSQL все задачи для конкретного platform_id.
     """
