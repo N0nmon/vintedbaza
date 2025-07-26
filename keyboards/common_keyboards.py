@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from db.models import Product, Sale,
+from db.models import Product, Sale
 
 def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """
