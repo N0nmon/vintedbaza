@@ -428,7 +428,7 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
             await message.answer(message_part, parse_mode="HTML")
 
     except Exception as e:
-        await message.answer(f"❌ Произошла ошибка при получении данных: {e}")
+        await callback.message.answer(f"❌ Произошла ошибка при получении данных: {e}")
 
 @router.callback_query(F.data == "summary_by_product")
 async def summary_by_product_start(callback: CallbackQuery, user: User):
