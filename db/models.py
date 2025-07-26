@@ -18,6 +18,7 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     photo_id: Mapped[str] = mapped_column(String, nullable=False)
     purchase_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default='0.0')
+    platform_id: Mapped[str] = mapped_column(String(50), nullable=True)
 
 class Stock(Base):
     __tablename__ = 'stock'

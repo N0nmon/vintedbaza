@@ -120,7 +120,8 @@ def get_product_management_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Поступление товара", callback_data="add_stock")],
         [InlineKeyboardButton(text="Редактировать товар", callback_data="edit_product")],
         [InlineKeyboardButton(text="Показать ID товаров", callback_data="show_product_ids")],
-        [InlineKeyboardButton(text="Синхронизировать папки этикеток", callback_data="sync_label_folders")],
+        # [InlineKeyboardButton(text="Синхронизировать папки этикеток", callback_data="sync_label_folders")],
+        [InlineKeyboardButton(text="Редактировать ID платформ", callback_data="edit_platform_ids")],
         [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="back_to_admin_panel")]
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)

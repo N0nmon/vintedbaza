@@ -20,6 +20,8 @@ from keyboards.common_keyboards import (
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
+from utils.postgres_connector import fetch_all_products_from_postgres
+from html import escape
 
 router = Router()
 
@@ -354,3 +356,58 @@ async def get_label_send_file(callback: CallbackQuery):
         await callback.answer("Файл этикетки для этого размера не найден.", show_alert=True)
     
     await callback.message.delete()
+
+# в конец файла handlers/common_handlers.py
+
+@router.message(F.text == "Сводка по задачам 📊")
+async def cmd_tasks_summary(message: Message, user: User):
+    await message.answer("🔍 Запрашиваю данные из PostgreSQL...")
+
+    try:
+        # 1. Получаем ВСЕ строки из PostgreSQL
+        pg_products = await fetch_all_products_from_postgres()
+
+        if not pg_products:
+            await message.answer("Таблица в PostgreSQL пуста.")
+            return
+
+        # 2. Получаем все наши товары для сопоставления ID
+        async with async_session() as session:
+            bot_products = (await session.execute(select(Product))).scalars().all()
+            platform_id_to_name_map = {p.platform_id: p.name for p in bot_products if p.platform_id}
+
+        # 3. Группируем строки по user_id из PostgreSQL
+        products_by_user = {}
+        for prod in pg_products:
+            user_id = prod['user_id']
+            if user_id not in products_by_user:
+                products_by_user[user_id] = []
+            products_by_user[user_id].append(prod)
+
+        # 4. Формируем и отправляем отчет
+        final_report = "<b>Полная сводка по таблице:</b>\n\n"
+        
+        for pg_user_id, user_products in products_by_user.items():
+            final_report += f"👤 **Пользователь <code>{pg_user_id}</code>:**\n"
+            for prod in user_products:
+                platform_id = prod['is_active']
+                product_name = platform_id_to_name_map.get(platform_id, f"Неизвестный товар ({platform_id})")
+                size = prod['size']
+                task_id = prod['id']
+                status = prod['status'] # Добавили вывод статуса
+                
+                # Определяем иконку для статуса для наглядности
+                status_icon = "✅" if status == 'done' else "⚙️" if status == 'processing' else "❓"
+                
+                final_report += f"  {status_icon} {escape(product_name)} (р: {size}), ст: {escape(status)} - **ID: {task_id}**\n"
+            final_report += "\n"
+
+        # Разбиваем сообщение на части, если оно слишком длинное
+        if len(final_report) > 4096:
+            for x in range(0, len(final_report), 4096):
+                await message.answer(final_report[x:x+4096], parse_mode="HTML")
+        else:
+            await message.answer(final_report, parse_mode="HTML")
+
+    except Exception as e:
+        await message.answer(f"❌ Произошла ошибка при получении данных: {e}")

@@ -581,6 +581,9 @@ async def handle_purchase_price(message: Message, state: FSMContext):
     if not message.text.replace('.', '', 1).isdigit():
         await message.answer("Цена должна быть числом. Попробуйте еще раз.")
         return
+    await state.update_data(purchase_price=float(message.text))
+    await message.answer("Цена принята. Теперь введите ID платформы (из колонки is_active, например '1906br'):")
+    await state.set_state(AddProductStates.platform_id)
     
     await state.update_data(purchase_price=float(message.text))
     data = await state.get_data()
@@ -1072,3 +1075,66 @@ async def remove_assignment_process(callback: CallbackQuery, state: FSMContext):
     await safe_edit_text(callback, "Управление аккаунтами площадок:", get_account_management_keyboard())
 
 # --- КОНЕЦ БЛОКА --
+
+# === НАЧАЛО БЛОКА: Логика редактирования ID платформы ===
+@router.callback_query(F.data == "edit_platform_ids")
+async def edit_platform_ids_start(callback: CallbackQuery, state: FSMContext):
+    async with async_session() as session:
+        products = (await session.execute(select(Product).order_by(Product.name))).scalars().all()
+    if not products:
+        await callback.answer("Сначала добавьте хотя бы один товар.", show_alert=True)
+        return
+    keyboard = create_product_selection_keyboard(products, prefix="edit_plat_id")
+    await callback.message.edit_text("Выберите товар, для которого хотите изменить ID платформы:", reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("edit_plat_id_"))
+async def edit_platform_id_select_product(callback: CallbackQuery, state: FSMContext):
+    product_id = int(callback.data.split('_')[-1])
+    async with async_session() as session:
+        product = await session.get(Product, product_id)
+    if not product:
+        await callback.answer("Товар не найден.", show_alert=True)
+        return
+    await state.update_data(product_id_to_edit=product_id)
+    await state.set_state(AdminStates.edit_platform_id)
+    current_id_text = f"<code>{escape(product.platform_id)}</code>" if product.platform_id else "<i>не установлен</i>"
+    await callback.message.edit_text(
+        f"Редактирование ID для товара: <b>{escape(product.name)}</b>\n"
+        f"Текущий ID: {current_id_text}\n\n"
+        f"Введите новый ID платформы (или отправьте 'удалить', чтобы очистить его):",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="cancel_edit_platform_id")]
+        ])
+    )
+
+@router.message(AdminStates.edit_platform_id)
+async def edit_platform_id_process(message: Message, state: FSMContext):
+    new_id = message.text.strip()
+    data = await state.get_data()
+    product_id = data.get("product_id_to_edit")
+    if new_id.lower() == 'удалить':
+        new_id = None
+        success_text = "ID успешно удален."
+    else:
+        success_text = f"ID <code>{escape(new_id)}</code> успешно присвоен."
+    try:
+        async with async_session() as session:
+            await session.execute(
+                update(Product).where(Product.id == product_id).values(platform_id=new_id)
+            )
+            await session.commit()
+        await message.answer(success_text, parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"⚠️ **Ошибка!**\nПопробуйте ввести другой ID.\n\n`{e}`", parse_mode="HTML")
+        return
+    await state.clear()
+    await edit_platform_ids_start(CallbackQuery(id='auto', from_user=message.from_user, chat_instance='auto', message=message), state)
+
+@router.callback_query(F.data == "cancel_edit_platform_id")
+async def cancel_edit_platform_id_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("Редактирование отменено.")
+    await edit_platform_ids_start(callback, state)
+# === КОНЕЦ БЛОКА ===
