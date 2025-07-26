@@ -5,6 +5,7 @@ class AdminStates(StatesGroup):
     add_user_id = State()
     add_user_name = State()
     delete_user_id = State()
+    edit_platform_id = State()
     
     # Состояние для управления доступом
     manage_access_user_id = State()
