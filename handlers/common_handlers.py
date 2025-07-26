@@ -1,7 +1,7 @@
 import os
 from html import escape
 
-from aiogram import Router, F, Bot, Depends
+from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile
