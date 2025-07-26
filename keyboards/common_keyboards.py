@@ -11,7 +11,8 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Мои продажи 📋")],
         [KeyboardButton(text="Получить этикетку 🏷️")],
         [KeyboardButton(text="Сводка 📈")],
-        [KeyboardButton(text="⭐️ Показать счётчик лайков"), [KeyboardButton(text="❤️ Сбросить счётчик лайков")]
+        [KeyboardButton(text="⭐️ Показать счётчик лайков"),
+        [KeyboardButton(text="❤️ Сбросить счётчик лайков")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     return keyboard
