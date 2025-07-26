@@ -1,7 +1,7 @@
 import os
 from html import escape
 
-from aiogram import Router, F, Bot
+from aiogram import Router, F, Bot, Depends
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile
@@ -24,6 +24,7 @@ from utils.notifications import send_sale_notification
 from utils.postgres_connector import fetch_all_products_from_postgres, fetch_product_tasks_from_postgres
 from html import escape
 from collections import defaultdict
+from typing import Callable, Dict, Any, Awaitable
 
 async def get_current_user(data: Dict[str, Any]) -> User:
     return data['user']
