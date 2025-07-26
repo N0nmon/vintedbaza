@@ -534,11 +534,14 @@ async def summary_by_product_process(callback: CallbackQuery):
 @router.callback_query(F.data == "summary_find_problems")
 async def find_all_problems(callback: CallbackQuery):
     """
-    Глобально ищет расхождения между складом и задачами по всем товарам.
+    Ищет 3 типа проблем:
+    1. "Забытые" товары (есть на складе, но нет в задачах).
+    2. Задачи, для которых нет остатков на складе.
+    3. Товары, для которых не задан ID платформы.
     """
     await callback.message.edit_text("🔍 Провожу полный аудит системы. Это может занять некоторое время...")
 
-    # 1. Получаем абсолютно все данные
+    # 1. Получаем все необходимые данные
     all_pg_tasks = await fetch_all_products_from_postgres()
     
     async with async_session() as session:
@@ -549,62 +552,78 @@ async def find_all_problems(callback: CallbackQuery):
             .group_by(Stock.product_id, Stock.size)
         )).all()
 
-    # 2. Структурируем данные для удобного доступа
-    product_map = {p.id: p for p in all_bot_products}
-    
+    # 2. Структурируем данные для удобного анализа
+    product_map_by_id = {p.id: p for p in all_bot_products}
+    product_map_by_platform_id = {p.platform_id: p for p in all_bot_products if p.platform_id}
+
     # Считаем остатки по каждому товару: {product_id: {size: count}}
     stock_counts = defaultdict(lambda: defaultdict(int))
     for product_id, size, count in stock_results:
         stock_counts[product_id][size] += count
         
-    # Считаем задачи по каждому товару: {platform_id: {size: count}}
-    tasks_counts = defaultdict(lambda: defaultdict(int))
-    for task in all_pg_tasks:
-        tasks_counts[task['is_active']][task['size']] += 1
+    # Создаем множество platform_id, которые есть в задачах
+    platform_ids_in_tasks = {task['is_active'] for task in all_pg_tasks}
+    
+    # 3. Начинаем анализ и формируем отчеты
+    forgotten_products_report = ""
+    tasks_without_stock_report = ""
+    products_without_id_report = ""
 
-    # 3. Начинаем анализ
-    problems_report = ""
-    products_without_id = []
-
+    # --- Анализ "Забытых" товаров ---
     for product in all_bot_products:
-        product_problems = ""
-        
-        # Проверяем товары без ID платформы
         if not product.platform_id:
-            products_without_id.append(product.name)
+            products_without_id_report += f"  - {escape(product.name)}\n"
             continue
-
-        # Получаем данные для текущего товара
-        current_stock = stock_counts.get(product.id, {})
-        current_tasks = tasks_counts.get(product.platform_id, {})
         
-        all_sizes = set(current_stock.keys()) | set(current_tasks.keys())
+        if product.id in stock_counts and product.platform_id not in platform_ids_in_tasks:
+            forgotten_products_report += f"\n<b>Товар: «{escape(product.name)}»</b>\n"
+            product_stock = stock_counts[product.id]
+            for size in sorted(product_stock.keys(), key=float):
+                forgotten_products_report += f"  - Размер {size}: {product_stock[size]} шт.\n"
+
+    # --- Анализ задач, для которых нет товара на складе ---
+    temp_tasks_without_stock = defaultdict(list)
+    for task in all_pg_tasks:
+        platform_id = task['is_active']
+        size = task['size']
+        product = product_map_by_platform_id.get(platform_id)
         
-        # Ищем проблемы для каждого размера
-        for size in sorted(all_sizes, key=float):
-            stock_count = current_stock.get(size, 0)
-            task_count = current_tasks.get(size, 0)
-
-            if stock_count > task_count:
-                product_problems += f"  - <b>Размер {size}:</b> {stock_count - task_count} шт. лежит на складе без дела (не выставлено).\n"
-            elif task_count > stock_count:
-                product_problems += f"  - ❗️<b>Размер {size}:</b> числится в {task_count} задачах, а на складе всего {stock_count} шт.!\n"
-
-        if product_problems:
-            problems_report += f"\n📦 <b>Проблемы с товаром «{escape(product.name)}»:</b>\n{product_problems}"
+        # Если для задачи найден соответствующий товар в боте
+        if product:
+            stock_count = stock_counts.get(product.id, {}).get(size, 0)
+            # Проверяем ГЛАВНУЮ ПРОБЛЕМУ: задача есть, а остатков НОЛЬ.
+            if stock_count == 0:
+                temp_tasks_without_stock[product.name].append(size)
     
-    # 4. Формируем финальный отчет
+    if temp_tasks_without_stock:
+        for product_name, sizes in temp_tasks_without_stock.items():
+            tasks_without_stock_report += f"\n<b>Товар: «{escape(product_name)}»</b>\n"
+            for size in sorted(sizes, key=float):
+                tasks_without_stock_report += f"  - <b>Размер {size}:</b> числится в задаче, но отсутствует на складе!\n"
+            
+    # 4. Формируем финальное сообщение
     final_text = "<b>Результаты полного аудита системы:</b>\n"
-    
-    if not problems_report and not products_without_id:
-        final_text += "\n✅ Расхождений не найдено. Все задачи соответствуют остаткам!"
-    else:
-        final_text += problems_report
-    
-    if products_without_id:
-        final_text += "\n\n🔑 <b>Товары без ID платформы:</b>\n"
-        for name in products_without_id:
-            final_text += f"  - {escape(name)}\n"
-        final_text += "<em>Эти товары не могут быть проверены на соответствие задачам.</em>"
+    has_problems = False
+
+    if forgotten_products_report:
+        has_problems = True
+        final_text += "\n📦 <b>\"Забытые\" товары на складе (нет ни одной задачи):</b>"
+        final_text += forgotten_products_report
+        final_text += "\n---"
+
+    if tasks_without_stock_report:
+        has_problems = True
+        final_text += "\n❗️ <b>Задачи, для которых НЕТ остатков на складе:</b>"
+        final_text += tasks_without_stock_report
+        final_text += "\n---"
+        
+    if products_without_id_report:
+        has_problems = True
+        final_text += "\n🔑 <b>Товары без ID платформы:</b>\n"
+        final_text += products_without_id_report
+        final_text += "<em>Эти товары не могут быть проверены.</em>"
+        
+    if not has_problems:
+        final_text += "\n✅ Проблем и расхождений не найдено. Отличная работа!"
 
     await callback.message.edit_text(final_text, parse_mode="HTML")
