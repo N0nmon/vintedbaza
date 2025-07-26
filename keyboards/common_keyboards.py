@@ -9,6 +9,7 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Просмотреть остатки 📦")],
         [KeyboardButton(text="Зарегистрировать продажу 💸")],
         [KeyboardButton(text="Мои продажи 📋")],
+        [KeyboardButton(text="Сводка по товарам 📈")],
         [KeyboardButton(text="Сводка по задачам 📊")],
         [KeyboardButton(text="Получить этикетку 🏷️")]
     ]

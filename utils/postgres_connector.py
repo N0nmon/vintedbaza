@@ -28,3 +28,15 @@ async def fetch_all_products_from_postgres():
     async with pool.acquire() as connection:
         rows = await connection.fetch(query)
     return rows
+
+    async def fetch_product_tasks_from_postgres(platform_id: str):
+    """
+    Запрашивает из PostgreSQL все задачи для конкретного platform_id.
+    """
+    if not platform_id:
+        return []
+    pool = await get_pg_pool()
+    query = "SELECT id, user_id, size FROM public.products WHERE is_active = $1 ORDER BY size"
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(query, platform_id)
+    return rows

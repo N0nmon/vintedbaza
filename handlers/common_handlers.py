@@ -20,7 +20,7 @@ from keyboards.common_keyboards import (
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
-from utils.postgres_connector import fetch_all_products_from_postgres
+from utils.postgres_connector import fetch_all_products_from_postgres, fetch_product_tasks_from_postgres
 from html import escape
 
 router = Router()
@@ -419,3 +419,99 @@ async def cmd_tasks_summary(message: Message, user: User):
 
     except Exception as e:
         await message.answer(f"❌ Произошла ошибка при получении данных: {e}")
+
+@router.message(F.text == "Сводка по товарам 📈")
+async def summary_by_product_start(message: Message, user: User):
+    """
+    Этот обработчик запускает процесс, предлагая пользователю выбрать товар.
+    """
+    async with async_session() as session:
+        products = await get_allowed_products(session, user)
+    
+    if not products:
+        await message.answer("Для вас нет доступных товаров.")
+        return
+    
+    # Используем существующую функцию для создания клавиатуры, но с новым префиксом
+    keyboard = create_products_keyboard(products, action="summary_product")
+    await message.answer("Выберите товар для анализа:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("summary_product_"))
+async def summary_by_product_process(callback: CallbackQuery):
+    """
+    Основной обработчик, который собирает, анализирует и выводит данные.
+    """
+    product_id = int(callback.data.split("_")[2])
+    await callback.message.edit_text("⚙️ Собираю и анализирую данные...")
+
+    # 1. Получаем информацию о товаре и его остатках из базы бота
+    async with async_session() as session:
+        product = await session.get(Product, product_id)
+        if not product:
+            await callback.message.edit_text("Ошибка: Товар не найден.")
+            return
+
+        # Проверяем, есть ли у товара ID для связи
+        if not product.platform_id:
+            await callback.message.edit_text(
+                f"<b>Ошибка:</b> Для товара «{escape(product.name)}» не установлен ID платформы.\n\n"
+                f"Администратор должен установить его в меню «Управление товарами» -> «Редактировать ID платформ».",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Запрос остатков
+        stock_result = await session.execute(
+            select(Stock.size, func.count(Stock.id))
+            .where(Stock.product_id == product_id, Stock.is_available == True)
+            .group_by(Stock.size)
+        )
+        # Словарь вида {'42': 3, '43': 1}
+        stock_counts = dict(stock_result.all())
+
+    # 2. Получаем задачи из PostgreSQL для этого товара
+    pg_tasks = await fetch_product_tasks_from_postgres(product.platform_id)
+    
+    # Группируем задачи по размерам для удобства, вида {'42': [ {'user_id': 1, 'id': 10}... ]}
+    tasks_by_size = {}
+    for task in pg_tasks:
+        size = task['size']
+        if size not in tasks_by_size:
+            tasks_by_size[size] = []
+        tasks_by_size[size].append(task)
+    
+    # 3. Формируем отчет
+    report_text = f"<b>Анализ по товару: {escape(product.name)}</b>\n\n"
+    
+    # --- Часть 1: Распределенные задачи ---
+    report_text += "📊 <b>Распределенные задачи (из PostgreSQL):</b>\n"
+    if not tasks_by_size:
+        report_text += "  <em>Задачи для этого товара не найдены.</em>\n"
+    else:
+        sorted_task_sizes = sorted(tasks_by_size.keys(), key=float)
+        for size in sorted_task_sizes:
+            tasks = tasks_by_size[size]
+            assignees = ", ".join([f"пользователю <code>{t['user_id']}</code> (ID: <code>{t['id']}</code>)" for t in tasks])
+            report_text += f"  • <b>Размер {size}</b> ({len(tasks)} шт.): назначен(а) {assignees}\n"
+    
+    # --- Часть 2: Свободные остатки ---
+    report_text += "\n📦 <b>Свободные остатки на складе (в боте):</b>\n"
+    
+    unassigned_stock = {size: count for size, count in stock_counts.items() if size not in tasks_by_size}
+    
+    if not unassigned_stock:
+         report_text += "  <em>Все остатки распределены по задачам.</em>\n"
+    else:
+        sorted_stock_sizes = sorted(unassigned_stock.keys(), key=float)
+        for size in sorted_stock_sizes:
+            count = unassigned_stock[size]
+            report_text += f"  ⚠️ <b>Размер {size}:</b> {count} шт. (не выставлено)\n"
+
+    # --- Часть 3: Потенциальные проблемы ---
+    problem_sizes = [size for size in tasks_by_size if size not in stock_counts]
+    if problem_sizes:
+        report_text += "\n❗️ <b>Возможные проблемы:</b>\n"
+        for size in problem_sizes:
+             report_text += f"  • <b>Размер {size}:</b> числится в задачах, но отсутствует на складе!\n"
+
+    await callback.message.edit_text(report_text, parse_mode="HTML")
