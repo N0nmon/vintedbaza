@@ -25,6 +25,9 @@ from utils.postgres_connector import fetch_all_products_from_postgres, fetch_pro
 from html import escape
 from collections import defaultdict
 
+async def get_current_user(data: Dict[str, Any]) -> User:
+    return data['user']
+
 router = Router()
 
 # --- Универсальный обработчик отмены для этого роутера ---
@@ -369,7 +372,7 @@ async def get_label_send_file(callback: CallbackQuery):
 # в конец файла handlers/common_handlers.py
 
 @router.callback_query(F.data == "summary_tasks")
-async def cmd_tasks_summary(callback: CallbackQuery, user: User):
+async def cmd_tasks_summary(callback: CallbackQuery, user: User = Depends(get_current_user)):
     await callback.message.edit_text("🔍 Запрашиваю данные из PostgreSQL...")
 
     try:
@@ -430,7 +433,7 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
         await message.answer(f"❌ Произошла ошибка при получении данных: {e}")
 
 @router.callback_query(F.data == "summary_by_product")
-async def summary_by_product_start(callback: CallbackQuery, user: User):
+async def summary_by_product_start(callback: CallbackQuery, user: User = Depends(get_current_user)):
     """
     Этот обработчик запускает процесс, предлагая пользователю выбрать товар.
     """
