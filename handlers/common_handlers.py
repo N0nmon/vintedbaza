@@ -21,7 +21,7 @@ from keyboards.common_keyboards import (
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
-from utils.postgres_connector import fetch_all_products_from_postgres, fetch_product_tasks_from_postgres
+from utils.postgres_connector import fetch_all_products_from_postgres, fetch_product_tasks_from_postgres, fetch_all_users_from_postgres
 from html import escape
 from collections import defaultdict
 
@@ -382,10 +382,8 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
             await callback.message.edit_text("Таблица в PostgreSQL пуста.")
             return
 
-        async with async_session() as session:
-            users_result = await session.execute(select(User))
-            # Создаем словарь вида {1: 'Admin', 3: 'Seller1'}
-            user_map = {u.user_id: u.username for u in users_result.scalars().all()}
+        pg_users = await fetch_all_users_from_postgres()
+        user_map = {user['id']: user['login'] for user in pg_users}
 
         # 2. Получаем все наши товары для сопоставления ID
         async with async_session() as session:
@@ -498,8 +496,8 @@ async def summary_by_product_process(callback: CallbackQuery):
         )
         # Словарь вида {'42': 3, '43': 1}
         stock_counts = dict(stock_result.all())
-        users_result = await session.execute(select(User))
-        user_map = {u.user_id: u.username for u in users_result.scalars().all()}
+        pg_users = await fetch_all_users_from_postgres()
+        user_map = {user['id']: user['login'] for user in pg_users}
     
     # 2. Получаем задачи из PostgreSQL для этого товара
     pg_tasks = await fetch_product_tasks_from_postgres(product.platform_id)

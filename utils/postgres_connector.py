@@ -40,3 +40,14 @@ async def fetch_product_tasks_from_postgres(platform_id: str):
     async with pool.acquire() as connection:
         rows = await connection.fetch(query, platform_id)
     return rows
+
+async def fetch_all_users_from_postgres():
+    """
+    Запрашивает всех пользователей из таблицы public.users в PostgreSQL.
+    """
+    pool = await get_pg_pool()
+    # Убедитесь, что название таблицы и колонок верные ('id', 'login')
+    query = "SELECT id, login FROM public.users"
+    async with pool.acquire() as connection:
+        rows = await connection.fetch(query)
+    return rows
