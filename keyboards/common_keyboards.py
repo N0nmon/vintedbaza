@@ -9,9 +9,8 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Просмотреть остатки 📦")],
         [KeyboardButton(text="Зарегистрировать продажу 💸")],
         [KeyboardButton(text="Мои продажи 📋")],
-        [KeyboardButton(text="Сводка по товарам 📈")],
-        [KeyboardButton(text="Сводка по задачам 📊")],
-        [KeyboardButton(text="Получить этикетку 🏷️")]
+        [KeyboardButton(text="Получить этикетку 🏷️")],
+        [KeyboardButton(text="Сводка 📈")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     return keyboard
@@ -94,3 +93,16 @@ def create_label_sizes_keyboard(sizes: list[str], product_id: int) -> InlineKeyb
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
 # --- КОНЕЦ БЛОКА ---
+
+def get_summary_menu_keyboard() -> InlineKeyboardMarkup:
+    """
+    Создает inline-клавиатуру для выбора типа сводки.
+    """
+    buttons = [
+        [InlineKeyboardButton(text="📈 Сводка по товарам", callback_data="summary_by_product")],
+        [InlineKeyboardButton(text="📊 Сводка по задачам", callback_data="summary_tasks")],
+        [InlineKeyboardButton(text="❗️ Поиск проблем в системе", callback_data="summary_find_problems")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="cancel_action")]
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return keyboard

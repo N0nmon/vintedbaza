@@ -16,12 +16,14 @@ from keyboards.common_keyboards import (
     get_main_menu_keyboard, create_products_keyboard, 
     create_sizes_keyboard, get_cancel_kb, remove_kb,
     get_my_sales_keyboard, create_confirmation_keyboard,
+    get_summary_menu_keyboard,
     create_label_sizes_keyboard
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
 from utils.postgres_connector import fetch_all_products_from_postgres, fetch_product_tasks_from_postgres
 from html import escape
+from collections import defaultdict
 
 router = Router()
 
@@ -50,6 +52,13 @@ async def get_allowed_products(session, user: User) -> list:
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer("Привет! Я бот для учета обуви.", reply_markup=get_main_menu_keyboard())
+
+@router.message(F.text == "Сводка 📈")
+async def show_summary_menu(message: Message):
+    """
+    Показывает меню выбора типа сводки.
+    """
+    await message.answer("Выберите тип сводки:", reply_markup=get_summary_menu_keyboard())
 
 @router.message(F.text == "Просмотреть остатки 📦")
 @router.message(Command("stock"))
@@ -359,9 +368,9 @@ async def get_label_send_file(callback: CallbackQuery):
 
 # в конец файла handlers/common_handlers.py
 
-@router.message(F.text == "Сводка по задачам 📊")
-async def cmd_tasks_summary(message: Message, user: User):
-    await message.answer("🔍 Запрашиваю данные из PostgreSQL...")
+@router.callback_query(F.data == "summary_tasks")
+async def cmd_tasks_summary(callback: CallbackQuery, user: User):
+    await callback.message.edit_text("🔍 Запрашиваю данные из PostgreSQL...")
 
     try:
         # 1. Получаем ВСЕ строки из PostgreSQL
@@ -420,21 +429,27 @@ async def cmd_tasks_summary(message: Message, user: User):
     except Exception as e:
         await message.answer(f"❌ Произошла ошибка при получении данных: {e}")
 
-@router.message(F.text == "Сводка по товарам 📈")
-async def summary_by_product_start(message: Message, user: User):
+@router.callback_query(F.data == "summary_by_product")
+async def summary_by_product_start(callback: CallbackQuery, user: User):
     """
     Этот обработчик запускает процесс, предлагая пользователю выбрать товар.
     """
     async with async_session() as session:
         products = await get_allowed_products(session, user)
     
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
     if not products:
-        await message.answer("Для вас нет доступных товаров.")
+        # Заменяем message.answer на callback.answer
+        await callback.answer("Для вас нет доступных товаров.", show_alert=True)
         return
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     
     # Используем существующую функцию для создания клавиатуры, но с новым префиксом
     keyboard = create_products_keyboard(products, action="summary_product")
-    await message.answer("Выберите товар для анализа:", reply_markup=keyboard)
+    
+    # И здесь тоже используем callback.message.edit_text вместо .answer, чтобы изменить текущее сообщение
+    await callback.message.edit_text("Выберите товар для анализа:", reply_markup=keyboard)
+    await callback.answer() # Ответ на колбэк, чтобы "часики" на кнопке пропали
 
 @router.callback_query(F.data.startswith("summary_product_"))
 async def summary_by_product_process(callback: CallbackQuery):
@@ -515,3 +530,81 @@ async def summary_by_product_process(callback: CallbackQuery):
              report_text += f"  • <b>Размер {size}:</b> числится в задачах, но отсутствует на складе!\n"
 
     await callback.message.edit_text(report_text, parse_mode="HTML")
+
+@router.callback_query(F.data == "summary_find_problems")
+async def find_all_problems(callback: CallbackQuery):
+    """
+    Глобально ищет расхождения между складом и задачами по всем товарам.
+    """
+    await callback.message.edit_text("🔍 Провожу полный аудит системы. Это может занять некоторое время...")
+
+    # 1. Получаем абсолютно все данные
+    all_pg_tasks = await fetch_all_products_from_postgres()
+    
+    async with async_session() as session:
+        all_bot_products = (await session.execute(select(Product))).scalars().all()
+        stock_results = (await session.execute(
+            select(Stock.product_id, Stock.size, func.count(Stock.id))
+            .where(Stock.is_available == True)
+            .group_by(Stock.product_id, Stock.size)
+        )).all()
+
+    # 2. Структурируем данные для удобного доступа
+    product_map = {p.id: p for p in all_bot_products}
+    
+    # Считаем остатки по каждому товару: {product_id: {size: count}}
+    stock_counts = defaultdict(lambda: defaultdict(int))
+    for product_id, size, count in stock_results:
+        stock_counts[product_id][size] += count
+        
+    # Считаем задачи по каждому товару: {platform_id: {size: count}}
+    tasks_counts = defaultdict(lambda: defaultdict(int))
+    for task in all_pg_tasks:
+        tasks_counts[task['is_active']][task['size']] += 1
+
+    # 3. Начинаем анализ
+    problems_report = ""
+    products_without_id = []
+
+    for product in all_bot_products:
+        product_problems = ""
+        
+        # Проверяем товары без ID платформы
+        if not product.platform_id:
+            products_without_id.append(product.name)
+            continue
+
+        # Получаем данные для текущего товара
+        current_stock = stock_counts.get(product.id, {})
+        current_tasks = tasks_counts.get(product.platform_id, {})
+        
+        all_sizes = set(current_stock.keys()) | set(current_tasks.keys())
+        
+        # Ищем проблемы для каждого размера
+        for size in sorted(all_sizes, key=float):
+            stock_count = current_stock.get(size, 0)
+            task_count = current_tasks.get(size, 0)
+
+            if stock_count > task_count:
+                product_problems += f"  - <b>Размер {size}:</b> {stock_count - task_count} шт. лежит на складе без дела (не выставлено).\n"
+            elif task_count > stock_count:
+                product_problems += f"  - ❗️<b>Размер {size}:</b> числится в {task_count} задачах, а на складе всего {stock_count} шт.!\n"
+
+        if product_problems:
+            problems_report += f"\n📦 <b>Проблемы с товаром «{escape(product.name)}»:</b>\n{product_problems}"
+    
+    # 4. Формируем финальный отчет
+    final_text = "<b>Результаты полного аудита системы:</b>\n"
+    
+    if not problems_report and not products_without_id:
+        final_text += "\n✅ Расхождений не найдено. Все задачи соответствуют остаткам!"
+    else:
+        final_text += problems_report
+    
+    if products_without_id:
+        final_text += "\n\n🔑 <b>Товары без ID платформы:</b>\n"
+        for name in products_without_id:
+            final_text += f"  - {escape(name)}\n"
+        final_text += "<em>Эти товары не могут быть проверены на соответствие задачам.</em>"
+
+    await callback.message.edit_text(final_text, parse_mode="HTML")
