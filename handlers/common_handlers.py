@@ -378,7 +378,8 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
         pg_products = await fetch_all_products_from_postgres()
 
         if not pg_products:
-            await message.answer("Таблица в PostgreSQL пуста.")
+            # Используем edit_text, чтобы обновить сообщение "Запрашиваю данные..."
+            await callback.message.edit_text("Таблица в PostgreSQL пуста.")
             return
 
         # 2. Получаем все наши товары для сопоставления ID
@@ -395,14 +396,15 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
             products_by_user[user_id].append(prod)
 
         # 4. Формируем и отправляем отчет с "умным" разделением
-        # Устанавливаем лимит Telegram
         TELEGRAM_MESSAGE_LIMIT = 4096
-        
-        # Начинаем первое сообщение с заголовка
         message_part = "<b>Полная сводка по таблице:</b>\n\n"
         
+        # --- ИСПРАВЛЕНИЕ ЛОГИКИ ОТПРАВКИ ---
+        
+        # Сначала отправим первое сообщение как редактирование исходного
+        is_first_part_sent = False
+
         for pg_user_id, user_products in products_by_user.items():
-            # Сначала формируем блок для текущего пользователя
             user_block = f"👤 <b>Пользователь <code>{pg_user_id}</code>:</b>\n"
             for prod in user_products:
                 platform_id = prod['is_active']
@@ -410,22 +412,27 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
                 size = prod['size']
                 task_id = prod['id']
                 user_block += f"  • {escape(product_name)} (размер: {size}) - <b>ID:</b> <code>{task_id}</code>\n"
-            user_block += "\n" # Пустая строка после блока пользователя
+            user_block += "\n"
 
-            # Проверяем, не превысит ли добавление нового блока лимит
             if len(message_part) + len(user_block) > TELEGRAM_MESSAGE_LIMIT:
-                # Если превысит, отправляем то, что уже есть
-                await message.answer(message_part, parse_mode="HTML")
-                # И начинаем новое сообщение с текущего блока
+                # Если это первая отправляемая часть, редактируем сообщение.
+                if not is_first_part_sent:
+                    await callback.message.edit_text(message_part, parse_mode="HTML")
+                    is_first_part_sent = True
+                # Все последующие части - отправляем как новые сообщения.
+                else:
+                    await callback.message.answer(message_part, parse_mode="HTML")
+                
                 message_part = user_block
             else:
-                # Если не превысит, просто добавляем блок к текущему сообщению
                 message_part += user_block
 
-        # После завершения цикла нужно отправить оставшуюся часть сообщения,
-        # если она не пустая (и не состоит только из заголовка)
+        # Отправляем последнюю оставшуюся часть
         if message_part and message_part != "<b>Полная сводка по таблице:</b>\n\n":
-            await message.answer(message_part, parse_mode="HTML")
+            if not is_first_part_sent:
+                await callback.message.edit_text(message_part, parse_mode="HTML")
+            else:
+                await callback.message.answer(message_part, parse_mode="HTML")
 
     except Exception as e:
         await callback.message.answer(f"❌ Произошла ошибка при получении данных: {e}")
