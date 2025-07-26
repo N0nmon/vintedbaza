@@ -36,6 +36,7 @@ async def main():
     dp = Dispatcher(storage=storage)
     
     dp.message.middleware(AccessControlMiddleware())
+    dp.callback_query.middleware(AccessControlMiddleware())
     
     dp.include_router(admin_handlers.router)
     dp.include_router(common_handlers.router)

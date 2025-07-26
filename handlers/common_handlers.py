@@ -24,10 +24,7 @@ from utils.notifications import send_sale_notification
 from utils.postgres_connector import fetch_all_products_from_postgres, fetch_product_tasks_from_postgres
 from html import escape
 from collections import defaultdict
-from typing import Callable, Dict, Any, Awaitable
 
-async def get_current_user(data: Dict[str, Any]) -> User:
-    return data['user']
 
 router = Router()
 
@@ -373,7 +370,7 @@ async def get_label_send_file(callback: CallbackQuery):
 # в конец файла handlers/common_handlers.py
 
 @router.callback_query(F.data == "summary_tasks")
-async def cmd_tasks_summary(callback: CallbackQuery, user: User = Depends(get_current_user)):
+async def cmd_tasks_summary(callback: CallbackQuery, user: User):
     await callback.message.edit_text("🔍 Запрашиваю данные из PostgreSQL...")
 
     try:
@@ -434,7 +431,7 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User = Depends(get_cu
         await message.answer(f"❌ Произошла ошибка при получении данных: {e}")
 
 @router.callback_query(F.data == "summary_by_product")
-async def summary_by_product_start(callback: CallbackQuery, user: User = Depends(get_current_user)):
+async def summary_by_product_start(callback: CallbackQuery, user: User):
     """
     Этот обработчик запускает процесс, предлагая пользователю выбрать товар.
     """
