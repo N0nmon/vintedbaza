@@ -534,10 +534,10 @@ async def summary_by_product_process(callback: CallbackQuery):
 @router.callback_query(F.data == "summary_find_problems")
 async def find_all_problems(callback: CallbackQuery):
     """
-    Ищет 3 типа проблем:
-    1. "Забытые" товары (есть на складе, но нет в задачах).
-    2. Задачи, для которых нет остатков на складе.
-    3. Товары, для которых не задан ID платформы.
+    Проводит полный аудит системы по трем направлениям:
+    1. Невыставленные остатки (есть на складе, нет в задачах).
+    2. "Призрачные" задачи (есть в задачах, нет на складе).
+    3. Товары без ID платформы.
     """
     await callback.message.edit_text("🔍 Провожу полный аудит системы. Это может занять некоторое время...")
 
@@ -553,62 +553,65 @@ async def find_all_problems(callback: CallbackQuery):
         )).all()
 
     # 2. Структурируем данные для удобного анализа
-    product_map_by_id = {p.id: p for p in all_bot_products}
     product_map_by_platform_id = {p.platform_id: p for p in all_bot_products if p.platform_id}
 
-    # Считаем остатки по каждому товару: {product_id: {size: count}}
+    # Считаем остатки: {product_id: {size: count}}
     stock_counts = defaultdict(lambda: defaultdict(int))
     for product_id, size, count in stock_results:
         stock_counts[product_id][size] += count
         
-    # Создаем множество platform_id, которые есть в задачах
-    platform_ids_in_tasks = {task['is_active'] for task in all_pg_tasks}
-    
+    # Считаем задачи: {platform_id: {size: count}}
+    tasks_counts = defaultdict(lambda: defaultdict(int))
+    for task in all_pg_tasks:
+        tasks_counts[task['is_active']][task['size']] += 1
+
     # 3. Начинаем анализ и формируем отчеты
-    forgotten_products_report = ""
+    unlisted_stock_report = ""
     tasks_without_stock_report = ""
     products_without_id_report = ""
 
-    # --- Анализ "Забытых" товаров ---
+    # Проходим по всем товарам в нашей базе бота
     for product in all_bot_products:
+        # Проблема 3: У товара нет ID
         if not product.platform_id:
             products_without_id_report += f"  - {escape(product.name)}\n"
             continue
-        
-        if product.id in stock_counts and product.platform_id not in platform_ids_in_tasks:
-            forgotten_products_report += f"\n<b>Товар: «{escape(product.name)}»</b>\n"
-            product_stock = stock_counts[product.id]
-            for size in sorted(product_stock.keys(), key=float):
-                forgotten_products_report += f"  - Размер {size}: {product_stock[size]} шт.\n"
 
-    # --- Анализ задач, для которых нет товара на складе ---
-    temp_tasks_without_stock = defaultdict(list)
-    for task in all_pg_tasks:
-        platform_id = task['is_active']
-        size = task['size']
-        product = product_map_by_platform_id.get(platform_id)
+        product_stock = stock_counts.get(product.id, {})
+        product_tasks = tasks_counts.get(product.platform_id, {})
         
-        # Если для задачи найден соответствующий товар в боте
-        if product:
-            stock_count = stock_counts.get(product.id, {}).get(size, 0)
-            # Проверяем ГЛАВНУЮ ПРОБЛЕМУ: задача есть, а остатков НОЛЬ.
-            if stock_count == 0:
-                temp_tasks_without_stock[product.name].append(size)
-    
-    if temp_tasks_without_stock:
-        for product_name, sizes in temp_tasks_without_stock.items():
-            tasks_without_stock_report += f"\n<b>Товар: «{escape(product_name)}»</b>\n"
-            for size in sorted(sizes, key=float):
-                tasks_without_stock_report += f"  - <b>Размер {size}:</b> числится в задаче, но отсутствует на складе!\n"
+        # Объединяем все уникальные размеры для этого товара из обоих источников
+        all_sizes_for_product = set(product_stock.keys()) | set(product_tasks.keys())
+
+        temp_unlisted = ""
+        temp_tasks_without_stock = ""
+
+        for size in sorted(all_sizes_for_product, key=float):
+            stock_count = product_stock.get(size, 0)
+            task_count = product_tasks.get(size, 0)
+
+            # Проблема 1: Есть на складе, но нет в задачах
+            if stock_count > 0 and task_count == 0:
+                temp_unlisted += f"  - <b>Размер {size}:</b> {stock_count} шт. лежит на складе без дела.\n"
+            
+            # Проблема 2: Есть в задачах, но нет на складе
+            elif task_count > 0 and stock_count == 0:
+                temp_tasks_without_stock += f"  - <b>Размер {size}:</b> числится в {task_count} задаче(ах), но отсутствует на складе!\n"
+
+        if temp_unlisted:
+            unlisted_stock_report += f"\n<b>Товар: «{escape(product.name)}»</b>\n{temp_unlisted}"
+        
+        if temp_tasks_without_stock:
+            tasks_without_stock_report += f"\n<b>Товар: «{escape(product.name)}»</b>\n{temp_tasks_without_stock}"
             
     # 4. Формируем финальное сообщение
     final_text = "<b>Результаты полного аудита системы:</b>\n"
     has_problems = False
 
-    if forgotten_products_report:
+    if unlisted_stock_report:
         has_problems = True
-        final_text += "\n📦 <b>\"Забытые\" товары на складе (нет ни одной задачи):</b>"
-        final_text += forgotten_products_report
+        final_text += "\n📦 <b>Невыставленные остатки (есть на складе, но нет задач):</b>"
+        final_text += unlisted_stock_report
         final_text += "\n---"
 
     if tasks_without_stock_report:
