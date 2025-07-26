@@ -410,7 +410,8 @@ async def cmd_tasks_summary(callback: CallbackQuery, user: User):
         is_first_part_sent = False
 
         for pg_user_id, user_products in products_by_user.items():
-            user_display_name = user_map.get(pg_user_id, f"ID: {pg_user_id}")
+            user_display_name = user_map.get(pg_user_id, f"ID {pg_user_id}")
+            user_display_name = str(user_display_name)
             user_block = f"👤 <b>Пользователь: {escape(user_display_name)}</b>\n"
             for prod in user_products:
                 platform_id = prod['is_active']
@@ -522,7 +523,10 @@ async def summary_by_product_process(callback: CallbackQuery):
         sorted_task_sizes = sorted(tasks_by_size.keys(), key=float)
         for size in sorted_task_sizes:
             tasks = tasks_by_size[size]
-            assignees = ", ".join([f"<b>{escape(user_map.get(t['user_id'], t['user_id']))}</b> (ID: <code>{t['id']}</code>)" for t in tasks])
+            assignees = ", ".join([
+                f"<b>{escape(user_map.get(t['user_id'], f'ID {t['user_id']}'))}</b> (ID: <code>{t['id']}</code>)" 
+                for t in tasks
+            ])
             report_text += f"  • <b>Размер {size}</b> ({len(tasks)} шт.): назначен(а) {assignees}\n"
     
     # --- Часть 2: Свободные остатки ---
