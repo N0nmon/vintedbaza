@@ -11,7 +11,7 @@ from sqlalchemy.orm import joinedload
 
 from config import settings
 from db.database import async_session
-from db.models import Product, Stock, Sale, User, UserProductAccess
+from db.models import Product, Stock, Sale, User, UserProductAccess, SystemState
 from keyboards.common_keyboards import (
     get_main_menu_keyboard, create_products_keyboard, 
     create_sizes_keyboard, get_cancel_kb, remove_kb,
@@ -648,3 +648,38 @@ async def find_all_problems(callback: CallbackQuery):
         final_text += "\n✅ Проблем и расхождений не найдено. Отличная работа!"
 
     await callback.message.edit_text(final_text, parse_mode="HTML")
+
+@router.message(F.text == "❤️ Сбросить счётчик лайков")
+async def reset_favorites_counter(message: Message):
+    """
+    Обнуляет счетчик добавлений в избранное.
+    """
+    async with async_session() as session:
+        counter_key = "favorites_counter"
+        counter = await session.get(SystemState, counter_key)
+        
+        if not counter:
+            # Если счетчика нет, создаем его с нулевым значением
+            counter = SystemState(key=counter_key, value=0)
+            session.add(counter)
+        else:
+            # Если есть, обнуляем
+            counter.value = 0
+        
+        await session.commit()
+
+    await message.answer("✅ Счётчик добавлений в избранное успешно сброшен на 0.")
+
+@router.message(F.text == "⭐️ Показать счётчик лайков")
+async def show_favorites_counter(message: Message):
+    """
+    Показывает текущее значение счетчика добавлений в избранное.
+    """
+    async with async_session() as session:
+        counter_key = "favorites_counter"
+        counter = await session.get(SystemState, counter_key)
+        
+        # Если счетчик еще не создан, его значение равно 0
+        current_value = counter.value if counter else 0
+
+    await message.answer(f"⭐ Текущее количество добавлений в избранное: **{current_value}**", parse_mode="Markdown")

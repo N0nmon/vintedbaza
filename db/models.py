@@ -67,3 +67,10 @@ class AccountAssignment(Base):
     account_id: Mapped[int] = mapped_column(ForeignKey('platform_accounts.id', ondelete="CASCADE"))
 
     __table_args__ = (UniqueConstraint('user_id', 'account_id', name='_user_account_uc'),)
+
+class SystemState(Base):
+    __tablename__ = 'system_state'
+    # Ключ для нашей переменной, например "favorites_counter"
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    # Значение счетчика
+    value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

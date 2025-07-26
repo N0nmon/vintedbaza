@@ -16,14 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from db.database import async_session
-from db.models import PlatformAccount, AccountAssignment, User
+from db.models import PlatformAccount, AccountAssignment, User, SystemState
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 KEYWORDS = {
     "Twój przedmiot został sprzedany": "🔥 ПРОДАЖА",
     "Nowa oferta dotycząca ogłoszenia": "💰 Новое предложение (оферта)",
-    "Nowa wiadomość na temat ogłoszenia": "💬 Новое сообщение"
+    "Nowa wiadomość na temat ogłoszenia": "💬 Новое сообщение",
+    "Twoja rzecz została dodana do ulubionych!": "⭐ Добавлено в избранное"
 }
 
 def get_gmail_service():
@@ -119,6 +120,37 @@ async def check_gmail(bot: Bot):
                 payload = msg["payload"]
                 
                 subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+
+                if "Twoja rzecz została dodana do ulubionych!" in subject:
+                    async with async_session() as session:
+                        # Получаем всех пользователей для уведомления
+                        all_user_ids = (await session.execute(select(User.user_id))).scalars().all()
+
+                        counter_key = "favorites_counter"
+                        counter = await session.get(SystemState, counter_key)
+                
+                        if not counter:
+                            counter = SystemState(key=counter_key, value=1)
+                            session.add(counter)
+                        else:
+                            counter.value += 1
+                
+                        new_value = counter.value
+                        await session.commit()
+
+                # Если достигнут порог, отправляем уведомление всем
+                if new_value > 0 and new_value % 10 == 0:
+                    notification_text = f"❤️ Накопилось **{new_value}** добавлений в избранное!\n\nПора проверить аккаунты и сбросить счетчик."
+                    for user_id in all_user_ids:
+                        try:
+                            await bot.send_message(chat_id=user_id, text=notification_text, parse_mode="Markdown")
+                        except Exception as e:
+                            print(f"Не удалось отправить уведомление о лайках пользователю {user_id}: {e}")
+            
+                # Помечаем письмо прочитанным и ПЕРЕХОДИМ К СЛЕДУЮЩЕМУ, минуя остальную логику
+                service.users().messages().modify(userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}).execute()
+                continue # <- Это очень важная строка!
+
                 body_text = get_body_text(payload)
 
                 if not body_text:

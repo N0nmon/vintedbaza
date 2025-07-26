@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from db.models import Product, Sale
+from db.models import Product, Sale,
 
 def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """
@@ -10,7 +10,8 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Зарегистрировать продажу 💸")],
         [KeyboardButton(text="Мои продажи 📋")],
         [KeyboardButton(text="Получить этикетку 🏷️")],
-        [KeyboardButton(text="Сводка 📈")]
+        [KeyboardButton(text="Сводка 📈")],
+        [KeyboardButton(text="⭐️ Показать счётчик лайков"), [KeyboardButton(text="❤️ Сбросить счётчик лайков")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     return keyboard
