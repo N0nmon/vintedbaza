@@ -584,28 +584,39 @@ async def handle_purchase_price(message: Message, state: FSMContext):
     await state.update_data(purchase_price=float(message.text))
     await message.answer("Цена принята. Теперь введите ID платформы (из колонки is_active, например '1906br'):")
     await state.set_state(AddProductStates.platform_id)
-    
-    await state.update_data(purchase_price=float(message.text))
-    data = await state.get_data()
-    
-    try:
-        async with async_session() as session:
-            new_product = Product(
-                name=data.get('name'), 
-                photo_id=data.get('photo_id'),
-                purchase_price=data.get('purchase_price')
-            )
-            session.add(new_product)
-            await session.flush()
-            
-            for size in data.get('sizes', []):
-                session.add(Stock(product_id=new_product.id, size=size))
-            await session.commit()
 
             # --- НАЧАЛО БЛОКА: Создаем папку для этикеток ---
         labels_dir = f"labels/{new_product.id}"
         os.makedirs(labels_dir, exist_ok=True)
         # --- КОНЕЦ БЛОКА ---
+
+@router.message(AddProductStates.platform_id)
+async def handle_platform_id(message: Message, state: FSMContext):
+    await state.update_data(platform_id=message.text)
+    data = await state.get_data()
+
+    try:
+        async with async_session() as session:
+            new_product = Product(
+                name=data.get('name'),
+                photo_id=data.get('photo_id'),
+                purchase_price=data.get('purchase_price'),
+                platform_id=data.get('platform_id')
+            )
+            session.add(new_product)
+            await session.flush()
+
+            for size in data.get('sizes', []):
+                session.add(Stock(product_id=new_product.id, size=size))
+            await session.commit()
+        
+        # ... остальной код ...
+        await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {e}", reply_markup=remove_kb())
+    finally:
+        await state.clear()
+        await show_admin_panel(message)
             
         await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
     except Exception as e:
