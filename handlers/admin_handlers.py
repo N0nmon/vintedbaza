@@ -578,47 +578,47 @@ async def handle_product_sizes(message: Message, state: FSMContext):
 
 @router.message(AddProductStates.purchase_price)
 async def handle_purchase_price(message: Message, state: FSMContext):
+    """
+    Это ПОСЛЕДНИЙ шаг в процессе добавления товара.
+    Он принимает цену и сразу сохраняет товар в базу.
+    """
+    # Проверяем, что введена цена
     if not message.text.replace('.', '', 1).isdigit():
         await message.answer("Цена должна быть числом. Попробуйте еще раз.")
         return
+    
+    # Получаем все данные из состояний
     await state.update_data(purchase_price=float(message.text))
-    await message.answer("Цена принята. Теперь введите ID платформы (из колонки is_active, например '1906br'):")
-    await state.set_state(AddProductStates.platform_id)
-
-@router.message(AddProductStates.platform_id)
-async def handle_platform_id(message: Message, state: FSMContext):
-    await state.update_data(platform_id=message.text)
     data = await state.get_data()
-
+    
+    # Сразу сохраняем товар в базу данных
     try:
         async with async_session() as session:
+            # Создаем товар БЕЗ platform_id. Он автоматически будет NULL (пустым).
             new_product = Product(
-                name=data.get('name'),
+                name=data.get('name'), 
                 photo_id=data.get('photo_id'),
-                purchase_price=data.get('purchase_price'),
-                platform_id=data.get('platform_id')
+                purchase_price=data.get('purchase_price')
             )
             session.add(new_product)
             await session.flush()
-
+            
+            # Добавляем остатки
             for size in data.get('sizes', []):
                 session.add(Stock(product_id=new_product.id, size=size))
             await session.commit()
-        
-            # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
-            # Эти строки должны быть здесь, внутри блока try
+
+            # Создаем папку для этикеток
             labels_dir = f"labels/{new_product.id}"
             os.makedirs(labels_dir, exist_ok=True)
-            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
-        await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
-        
+            
+            await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
     except Exception as e:
         await message.answer(f"Произошла ошибка: {e}", reply_markup=remove_kb())
     finally:
+        # Очищаем состояние, завершая процесс
         await state.clear()
         await show_admin_panel(message)
-# --- НАЧАЛО БЛОКА: Показать ID товаров ---
 
 @router.callback_query(F.data == "show_product_ids")
 async def show_product_ids_handler(callback: CallbackQuery):
