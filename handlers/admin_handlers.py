@@ -585,11 +585,6 @@ async def handle_purchase_price(message: Message, state: FSMContext):
     await message.answer("Цена принята. Теперь введите ID платформы (из колонки is_active, например '1906br'):")
     await state.set_state(AddProductStates.platform_id)
 
-            # --- НАЧАЛО БЛОКА: Создаем папку для этикеток ---
-        labels_dir = f"labels/{new_product.id}"
-        os.makedirs(labels_dir, exist_ok=True)
-        # --- КОНЕЦ БЛОКА ---
-
 @router.message(AddProductStates.platform_id)
 async def handle_platform_id(message: Message, state: FSMContext):
     await state.update_data(platform_id=message.text)
@@ -610,15 +605,14 @@ async def handle_platform_id(message: Message, state: FSMContext):
                 session.add(Stock(product_id=new_product.id, size=size))
             await session.commit()
         
-        # ... остальной код ...
+            # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+            # Эти строки должны быть здесь, внутри блока try
+            labels_dir = f"labels/{new_product.id}"
+            os.makedirs(labels_dir, exist_ok=True)
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
         await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
-    except Exception as e:
-        await message.answer(f"Произошла ошибка: {e}", reply_markup=remove_kb())
-    finally:
-        await state.clear()
-        await show_admin_panel(message)
-            
-        await message.answer(f"Товар '{escape(data.get('name'))}' успешно добавлен.", reply_markup=remove_kb())
+        
     except Exception as e:
         await message.answer(f"Произошла ошибка: {e}", reply_markup=remove_kb())
     finally:
