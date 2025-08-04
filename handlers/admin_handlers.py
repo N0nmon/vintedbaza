@@ -1148,8 +1148,11 @@ async def cancel_edit_platform_id_handler(callback: CallbackQuery, state: FSMCon
 
 @router.callback_query(F.data == "manage_categories")
 async def manage_categories_menu(callback: CallbackQuery, state: FSMContext):
-    """Показывает меню управления категориями."""
-    await state.clear() # На всякий случай чистим состояние
+    """
+    Показывает меню управления категориями.
+    Умеет обрабатывать возврат как из текстовых сообщений, так и из сообщений с фото.
+    """
+    await state.clear()
     async with async_session() as session:
         categories = (await session.execute(select(Category).order_by(Category.name))).scalars().all()
 
@@ -1158,9 +1161,21 @@ async def manage_categories_menu(callback: CallbackQuery, state: FSMContext):
         text += "<i>Пока не создано ни одной категории.</i>"
     else:
         text += "\n".join([f"• {escape(cat.name)}" for cat in categories])
+    
+    keyboard = get_category_management_keyboard()
 
-    await callback.message.edit_text(text, reply_markup=get_category_management_keyboard(), parse_mode="HTML")
-    await callback.answer()  
+    # --- НАЧАЛО ИЗМЕНЕНИЯ ---
+    try:
+        # Пытаемся отредактировать, если это было текстовое сообщение
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except TelegramBadRequest:
+        # Если не получилось (значит, это было сообщение с фото),
+        # то удаляем его и отправляем новое текстовое.
+        await callback.message.delete()
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+    
+    await callback.answer()
 async def show_next_unassigned_product(callback: CallbackQuery, state: FSMContext):
     """
     Находит следующий товар без категории и показывает его для распределения.
