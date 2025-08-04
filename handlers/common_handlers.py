@@ -8,6 +8,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select, func, update
 from sqlalchemy.orm import joinedload
+from sqlalchemy import text
 
 from config import settings
 from db.database import async_session
