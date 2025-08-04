@@ -134,8 +134,26 @@ def get_category_management_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Добавить категорию", callback_data="add_category")],
         [InlineKeyboardButton(text="Переименовать категорию", callback_data="rename_category")],
         [InlineKeyboardButton(text="Удалить категорию", callback_data="delete_category")],
+        [InlineKeyboardButton(text="Распределить товары по категориям", callback_data="assign_products_to_category")],
         [InlineKeyboardButton(text="⬅️ Назад к управлению товарами", callback_data="manage_products")]
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def create_assign_category_keyboard(categories: list[Category], product_id: int) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора категории для конкретного товара."""
+    buttons = []
+    # Делаем кнопки по 2 в ряд, если их много
+    row = []
+    for cat in categories:
+        row.append(InlineKeyboardButton(text=cat.name, callback_data=f"assign_cat_{product_id}_{cat.id}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="➡️ Пропустить товар", callback_data=f"assign_cat_skip_{product_id}")])
+    buttons.append([InlineKeyboardButton(text="⏹️ Завершить распределение", callback_data="manage_categories")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def create_category_selection_keyboard(categories: list[Category], callback_prefix: str) -> InlineKeyboardMarkup:

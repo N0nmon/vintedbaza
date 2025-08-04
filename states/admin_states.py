@@ -51,3 +51,4 @@ class CategoryStates(StatesGroup):
     select_category_to_rename = State()
     enter_new_category_name = State()
     select_category_to_delete = State()
+    assign_category = State()

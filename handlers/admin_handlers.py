@@ -26,7 +26,8 @@ from keyboards.admin_keyboards import (
     create_text_filter_selection_keyboard, get_reports_panel_keyboard,
     get_finance_summary_keyboard, get_account_management_keyboard,
     create_account_selection_keyboard, create_assignment_selection_keyboard,
-    get_category_management_keyboard, create_category_selection_keyboard
+    get_category_management_keyboard, create_category_selection_keyboard,
+    create_assign_category_keyboard
 )
 from keyboards.common_keyboards import get_cancel_kb, remove_kb
 from states.admin_states import AdminStates, AddProductStates, EditProductStates, JournalFilterStates, ReportStates, AddStockStates, AccountManagementStates, CategoryStates
@@ -1159,7 +1160,75 @@ async def manage_categories_menu(callback: CallbackQuery, state: FSMContext):
         text += "\n".join([f"• {escape(cat.name)}" for cat in categories])
 
     await callback.message.edit_text(text, reply_markup=get_category_management_keyboard(), parse_mode="HTML")
-    await callback.answer()
+    await callback.answer()   
+async def show_next_unassigned_product(callback: CallbackQuery, state: FSMContext):
+    """
+    Находит следующий товар без категории и показывает его для распределения.
+    Это вспомогательная функция, а не хендлер.
+    """
+    async with async_session() as session:
+        # Находим один товар, у которого category_id IS NULL
+        unassigned_product = (await session.execute(
+            select(Product).where(Product.category_id.is_(None)).limit(1)
+        )).scalar_one_or_none()
+
+        if not unassigned_product:
+            await callback.message.edit_text("🎉 Все товары распределены по категориям!", reply_markup=get_category_management_keyboard())
+            await state.clear()
+            return
+
+        # Получаем все категории для клавиатуры
+        all_categories = (await session.execute(select(Category).order_by(Category.name))).scalars().all()
+        if not all_categories:
+            await callback.message.edit_text("Сначала нужно создать хотя бы одну категорию.", reply_markup=get_category_management_keyboard())
+            await state.clear()
+            return
+
+    await state.set_state(CategoryStates.assign_category)
+    keyboard = create_assign_category_keyboard(all_categories, unassigned_product.id)
+    caption = f"Куда отнести товар «<b>{escape(unassigned_product.name)}</b>»?"
+
+    # Удаляем старое сообщение и отправляем новое с фото, чтобы избежать ошибок
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        photo=unassigned_product.photo_id,
+        caption=caption,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "assign_products_to_category")
+async def assign_products_start(callback: CallbackQuery, state: FSMContext):
+    """Запускает процесс распределения."""
+    await callback.answer("Начинаем распределение...")
+    await show_next_unassigned_product(callback, state)
+
+
+@router.callback_query(F.data.startswith("assign_cat_"), CategoryStates.assign_category)
+async def assign_category_process(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает нажатие на категорию или кнопку 'пропустить'."""
+    parts = callback.data.split("_")
+    action = parts[2]
+
+    if action == "skip":
+        # Просто показываем следующий товар
+        await callback.answer("Товар пропущен.")
+        await show_next_unassigned_product(callback, state)
+        return
+
+    # Если нажали на категорию
+    product_id = int(parts[2])
+    category_id = int(parts[3])
+
+    async with async_session() as session:
+        await session.execute(
+            update(Product).where(Product.id == product_id).values(category_id=category_id)
+        )
+        await session.commit()
+
+    await callback.answer("Товар распределен!", show_alert=False)
+    # Показываем следующий
+    await show_next_unassigned_product(callback, state)
 
 # --- Добавление категории ---
 @router.callback_query(F.data == "add_category")
