@@ -19,6 +19,8 @@ class Product(Base):
     photo_id: Mapped[str] = mapped_column(String, nullable=False)
     purchase_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default='0.0')
     platform_id: Mapped[str] = mapped_column(String(50), nullable=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey('categories.id'), nullable=True)
+    category: Mapped["Category"] = relationship(back_populates="products", lazy="joined")
 
 class Stock(Base):
     __tablename__ = 'stock'
@@ -74,3 +76,11 @@ class SystemState(Base):
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     # Значение счетчика
     value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+class Category(Base):
+    __tablename__ = 'categories'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    
+    # Связь "один ко многим" с товарами
+    products: Mapped[list["Product"]] = relationship(back_populates="category")
