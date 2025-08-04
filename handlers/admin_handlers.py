@@ -1176,16 +1176,23 @@ async def manage_categories_menu(callback: CallbackQuery, state: FSMContext):
     # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
     await callback.answer()
-async def show_next_unassigned_product(callback: CallbackQuery, state: FSMContext):
+async def show_next_unassigned_product(callback: CallbackQuery, state: FSMContext, product_to_skip_id: int = None):
     """
     Находит следующий товар без категории и показывает его для распределения.
-    Это вспомогательная функция, а не хендлер.
+    Может пропустить товар с определенным ID.
     """
     async with async_session() as session:
-        # Находим один товар, у которого category_id IS NULL
-        unassigned_product = (await session.execute(
-            select(Product).where(Product.category_id.is_(None)).limit(1)
-        )).scalar_one_or_none()
+        # --- НАЧАЛО ИЗМЕНЕНИЯ ---
+        # Строим базовый запрос
+        query = select(Product).where(Product.category_id.is_(None))
+
+        # Если нам нужно пропустить какой-то товар, добавляем условие
+        if product_to_skip_id:
+            query = query.where(Product.id != product_to_skip_id)
+        
+        # Выполняем запрос
+        unassigned_product = (await session.execute(query.limit(1))).scalar_one_or_none()
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         if not unassigned_product:
             await callback.message.edit_text("🎉 Все товары распределены по категориям!", reply_markup=get_category_management_keyboard())
@@ -1219,30 +1226,31 @@ async def assign_products_start(callback: CallbackQuery, state: FSMContext):
     await show_next_unassigned_product(callback, state)
 
 
-@router.callback_query(F.data.startswith("assign_cat_"), CategoryStates.assign_category)
+ @router.callback_query(F.data.startswith("assign_cat_"), CategoryStates.assign_category)
 async def assign_category_process(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает нажатие на категорию или кнопку 'пропустить'."""
     parts = callback.data.split("_")
     action = parts[2]
-
+    
     if action == "skip":
-        # Просто показываем следующий товар
+        product_id_to_skip = int(parts[3]) # Получаем ID товара, который надо пропустить
         await callback.answer("Товар пропущен.")
-        await show_next_unassigned_product(callback, state)
+        # Передаем ID в функцию, чтобы она его проигнорировала
+        await show_next_unassigned_product(callback, state, product_to_skip_id=product_id_to_skip)
         return
-
+    
     # Если нажали на категорию
     product_id = int(parts[2])
     category_id = int(parts[3])
-
+    
     async with async_session() as session:
         await session.execute(
             update(Product).where(Product.id == product_id).values(category_id=category_id)
         )
         await session.commit()
-
+    
     await callback.answer("Товар распределен!", show_alert=False)
-    # Показываем следующий
+    # Показываем следующий. Здесь `product_to_skip_id` не нужен, т.к. мы изменили товар, и он больше не попадется.
     await show_next_unassigned_product(callback, state)
 
 # --- Добавление категории ---
