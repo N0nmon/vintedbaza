@@ -1225,8 +1225,7 @@ async def assign_products_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer("Начинаем распределение...")
     await show_next_unassigned_product(callback, state)
 
-
- @router.callback_query(F.data.startswith("assign_cat_"), CategoryStates.assign_category)
+@router.callback_query(F.data.startswith("assign_cat_"), CategoryStates.assign_category)
 async def assign_category_process(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает нажатие на категорию или кнопку 'пропустить'."""
     parts = callback.data.split("_")
