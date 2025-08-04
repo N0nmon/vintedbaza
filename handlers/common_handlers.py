@@ -231,12 +231,42 @@ async def confirm_sale_action_handler(callback: CallbackQuery):
 @router.message(F.text == "Зарегистрировать продажу 💸")
 async def start_sale(message: Message, state: FSMContext, user: User):
     async with async_session() as session:
-        products = await get_allowed_products(session, user)
-    if not products:
+        # Получаем категории, к которым у пользователя есть доступ
+        stmt = (
+            select(Category)
+            .join(Product)
+            .join(UserProductAccess, Product.id == UserProductAccess.product_id, isouter=True)
+            .where(
+                (UserProductAccess.user_id == user.user_id) | (user.is_admin == True)
+            )
+            .distinct()
+            .order_by(Category.name)
+        )
+        categories = (await session.execute(stmt)).scalars().all()
+
+    if not categories:
         await message.answer("Нечего продавать. Для вас нет доступных товаров.")
         return
-    keyboard = create_products_keyboard(products, action="sale")
-    await message.answer("Выберите товар, который был продан:", reply_markup=keyboard)
+
+    keyboard = create_categories_keyboard(categories, action="sale")
+    await message.answer("Выберите категорию проданного товара:", reply_markup=keyboard)
+    # Устанавливаем новый начальный стейт
+    await state.set_state(SaleStates.select_category)
+
+@router.callback_query(F.data.startswith("category_sale_"), StateFilter(SaleStates.select_category))
+async def select_sale_category(callback: CallbackQuery, state: FSMContext, user: User):
+    category_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        allowed_products = await get_allowed_products(session, user)
+        products_in_category = [p for p in allowed_products if p.category_id == category_id]
+
+    if not products_in_category:
+        await callback.answer("В этой категории нет доступных для продажи товаров.", show_alert=True)
+        return
+
+    keyboard = create_products_keyboard(products_in_category, action="sale", category_id=category_id)
+    await callback.message.edit_text("Выберите товар, который был продан:", reply_markup=keyboard)
     await state.set_state(SaleStates.select_product)
 
 @router.callback_query(F.data.regexp(r"^sale_\d+$"), StateFilter(SaleStates.select_product))
@@ -348,19 +378,42 @@ async def enter_screenshot(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(F.text == "Получить этикетку 🏷️")
 async def get_label_start(message: Message, user: User):
-    print(f"[DEBUG] Пользователь {user.user_id} запросил получение этикетки.")
     async with async_session() as session:
-        products = await get_allowed_products(session, user)
-        print(f"[DEBUG] Доступные товары для пользователя {user.user_id}: {products}")
+        # Та же логика, что и раньше
+        stmt = (
+            select(Category)
+            .join(Product)
+            .join(UserProductAccess, Product.id == UserProductAccess.product_id, isouter=True)
+            .where(
+                (UserProductAccess.user_id == user.user_id) | (user.is_admin == True)
+            )
+            .distinct()
+            .order_by(Category.name)
+        )
+        categories = (await session.execute(stmt)).scalars().all()
     
-    if not products:
-        print(f"[DEBUG] Для пользователя {user.user_id} нет доступных товаров.")
+    if not categories:
         await message.answer("Для вас нет доступных товаров.")
         return
     
-    keyboard = create_products_keyboard(products, action="label_product")
-    print(f"[DEBUG] Клавиатура для выбора товаров создана: {keyboard}")
-    await message.answer("Выберите товар, для которого нужна этикетка:", reply_markup=keyboard)
+    # action будет 'label_product'
+    keyboard = create_categories_keyboard(categories, action="label_product")
+    await message.answer("Выберите категорию товара, для которого нужна этикетка:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("category_label_product_"))
+async def get_label_select_category(callback: CallbackQuery, user: User):
+    category_id = int(callback.data.split("_")[-1])
+    async with async_session() as session:
+        allowed_products = await get_allowed_products(session, user)
+        products_in_category = [p for p in allowed_products if p.category_id == category_id]
+
+    if not products_in_category:
+        await callback.answer("В этой категории нет доступных товаров.", show_alert=True)
+        return
+    
+    # action='label_product' для правильной генерации callback_data
+    keyboard = create_products_keyboard(products_in_category, action="label_product", category_id=category_id)
+    await callback.message.edit_text("Выберите товар, для которого нужна этикетка:", reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("label_product_"))
 async def get_label_select_product(callback: CallbackQuery):

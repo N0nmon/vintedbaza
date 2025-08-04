@@ -1,6 +1,7 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class SaleStates(StatesGroup):
+    select_category = State()
     select_product = State()
     select_size = State()
     price = State()
