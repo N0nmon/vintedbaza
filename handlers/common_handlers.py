@@ -18,7 +18,8 @@ from keyboards.common_keyboards import (
     create_sizes_keyboard, get_cancel_kb, remove_kb,
     get_my_sales_keyboard, create_confirmation_keyboard,
     get_summary_menu_keyboard,
-    create_label_sizes_keyboard, create_categories_keyboard
+    create_categories_keyboard,
+    create_label_sizes_keyboard
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
