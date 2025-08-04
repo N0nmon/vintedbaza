@@ -12,13 +12,13 @@ from sqlalchemy import text
 
 from config import settings
 from db.database import async_session
-from db.models import Product, Stock, Sale, User, UserProductAccess, SystemState
+from db.models import Product, Stock, Sale, User, UserProductAccess, SystemState, Category
 from keyboards.common_keyboards import (
     get_main_menu_keyboard, create_products_keyboard, 
     create_sizes_keyboard, get_cancel_kb, remove_kb,
     get_my_sales_keyboard, create_confirmation_keyboard,
     get_summary_menu_keyboard,
-    create_label_sizes_keyboard
+    create_label_sizes_keyboard, create_categories_keyboard
 )
 from states.user_states import SaleStates
 from utils.notifications import send_sale_notification
@@ -66,12 +66,66 @@ async def show_summary_menu(message: Message):
 @router.message(Command("stock"))
 async def cmd_stock(message: Message, user: User):
     async with async_session() as session:
-        products = await get_allowed_products(session, user)
-    if not products:
+        # Получаем только те категории, в которых есть разрешенные для пользователя товары
+        stmt = (
+            select(Category)
+            .join(Product)
+            .join(UserProductAccess, Product.id == UserProductAccess.product_id, isouter=True)
+            .where(
+                (UserProductAccess.user_id == user.user_id) | (user.is_admin == True)
+            )
+            .distinct()
+            .order_by(Category.name)
+        )
+        categories = (await session.execute(stmt)).scalars().all()
+
+    if not categories:
         await message.answer("Для вас нет доступных товаров.")
         return
-    keyboard = create_products_keyboard(products, action="stock")
-    await message.answer("Выберите товар для просмотра остатков:", reply_markup=keyboard)
+
+    keyboard = create_categories_keyboard(categories, action="stock")
+    await message.answer("Выберите категорию для просмотра остатков:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("back_to_categories_"))
+async def back_to_categories_handler(callback: CallbackQuery, user: User):
+    """
+    Обрабатывает нажатие кнопки "Назад к категориям".
+    """
+    action = callback.data.split("_")[-1] # Получаем 'stock', 'sale' и т.д.
+    
+    async with async_session() as session:
+        stmt = (
+            select(Category)
+            .join(Product)
+            .join(UserProductAccess, Product.id == UserProductAccess.product_id, isouter=True)
+            .where(
+                (UserProductAccess.user_id == user.user_id) | (user.is_admin == True)
+            )
+            .distinct()
+            .order_by(Category.name)
+        )
+        categories = (await session.execute(stmt)).scalars().all()
+    
+    keyboard = create_categories_keyboard(categories, action=action)
+    await callback.message.edit_text("Выберите категорию:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("category_stock_"))
+async def show_products_in_category_stock(callback: CallbackQuery, user: User):
+    """
+    Показывает товары из выбранной категории для просмотра остатков.
+    """
+    category_id = int(callback.data.split("_")[-1])
+    async with async_session() as session:
+        # Получаем все разрешенные товары из этой категории
+        allowed_products = await get_allowed_products(session, user)
+        products_in_category = [p for p in allowed_products if p.category_id == category_id]
+
+    if not products_in_category:
+        await callback.answer("В этой категории для вас нет доступных товаров.", show_alert=True)
+        return
+
+    keyboard = create_products_keyboard(products_in_category, action="stock", category_id=category_id)
+    await callback.message.edit_text("Выберите товар для просмотра остатков:", reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("stock_"))
 async def show_product_stock(callback: CallbackQuery):
