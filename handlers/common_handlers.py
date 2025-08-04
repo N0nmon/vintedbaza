@@ -13,13 +13,6 @@ from sqlalchemy import text
 from config import settings
 from db.database import async_session
 from db.models import Product, Stock, Sale, User, UserProductAccess, SystemState, Category
-import keyboards.common_keyboards
-import pprint
-print("--- DEBUG START ---")
-print(f"DEBUG: Загружен файл клавиатур: {keyboards.common_keyboards.__file__}")
-print("DEBUG: Содержимое (все, что Python видит в этом файле):")
-pprint.pprint(dir(keyboards.common_keyboards))
-print("--- DEBUG END ---")
 from keyboards.common_keyboards import (
     get_main_menu_keyboard, create_products_keyboard, 
     create_sizes_keyboard, get_cancel_kb, remove_kb,

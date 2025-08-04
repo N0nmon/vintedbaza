@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from db.models import Product, Sale
+from db.models import Product, Sale, Category
 
 def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """
@@ -16,6 +16,26 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     return keyboard
+
+def create_categories_keyboard(categories: list[Category], action: str) -> InlineKeyboardMarkup:
+    """
+    Создает inline-клавиатуру со списком категорий.
+    action используется для формирования callback_data (stock, sale, label_product)
+    """
+    buttons = []
+    row = []
+    for cat in categories:
+        # Пример callback_data: 'category_stock_1'
+        callback_data = f"category_{action}_{cat.id}"
+        row.append(InlineKeyboardButton(text=cat.name, callback_data=callback_data))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="cancel_action")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_my_sales_keyboard() -> InlineKeyboardMarkup:
     buttons = [
@@ -51,7 +71,7 @@ def remove_kb() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
-def create_products_keyboard(products: list[Product], action: str) -> InlineKeyboardMarkup:
+def create_products_keyboard(products: list[Product], action: str, category_id: int = None) -> InlineKeyboardMarkup:
     """
     Создает inline-клавиатуру со списком товаров.
     action может быть 'stock' или 'sale' для формирования разных callback_data.
@@ -62,7 +82,14 @@ def create_products_keyboard(products: list[Product], action: str) -> InlineKeyb
         button = InlineKeyboardButton(text=product.name, callback_data=callback_data)
         buttons.append([button])
     
-    buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="cancel_action")])
+    if category_id:
+        # Если мы пришли из меню категорий, кнопка "Отмена" должна вести обратно к нему
+        # Пример callback_data: 'back_to_categories_stock'
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад к категориям", callback_data=f"back_to_categories_{action}")])
+    else:
+        # Стандартное поведение
+        buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="cancel_action")])
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
 
