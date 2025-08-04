@@ -1160,7 +1160,7 @@ async def manage_categories_menu(callback: CallbackQuery, state: FSMContext):
         text += "\n".join([f"• {escape(cat.name)}" for cat in categories])
 
     await callback.message.edit_text(text, reply_markup=get_category_management_keyboard(), parse_mode="HTML")
-    await callback.answer()   
+    await callback.answer()  
 async def show_next_unassigned_product(callback: CallbackQuery, state: FSMContext):
     """
     Находит следующий товар без категории и показывает его для распределения.
