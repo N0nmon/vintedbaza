@@ -683,3 +683,37 @@ async def show_favorites_counter(message: Message):
         current_value = counter.value if counter else 0
 
     await message.answer(f"⭐ Текущее количество добавлений в избранное: **{current_value}**", parse_mode="Markdown")
+
+@router.message(Command("debugdb"))
+async def debug_db_connection(message: Message):
+    """
+    Выполняет диагностику подключения к БД и отправляет отчет.
+    """
+    try:
+        async with async_session() as session:
+            # 1. Проверяем, к какой БД мы подключены на самом деле
+            db_name_result = await session.execute(text("SELECT current_database();"))
+            db_name = db_name_result.scalar_one()
+
+            # 2. Проверяем, какой search_path используется
+            search_path_result = await session.execute(text("SHOW search_path;"))
+            search_path = search_path_result.scalar_one()
+
+            # 3. Получаем реальный список таблиц из схемы public
+            tables_result = await session.execute(text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public';"
+            ))
+            tables = tables_result.scalars().all()
+            tables_list_str = "\n".join([f"• <code>{t}</code>" for t in tables]) if tables else "<i>Таблицы в схеме 'public' не найдены.</i>"
+
+            response = (
+                f"<b>⚙️ Отчет по подключению к БД:</b>\n\n"
+                f"<b>1. Имя базы данных, к которой подключен бот:</b>\n<code>{escape(db_name)}</code>\n\n"
+                f"<b>2. Текущий путь поиска схем (search_path):</b>\n<code>{escape(search_path)}</code>\n\n"
+                f"<b>3. Список таблиц, которые бот видит в схеме 'public':</b>\n{tables_list_str}"
+            )
+            await message.answer(response, parse_mode="HTML")
+
+    except Exception as e:
+        error_text = f"<b>❌ Ошибка во время диагностики:</b>\n\n<pre>{escape(str(e))}</pre>"
+        await message.answer(error_text, parse_mode="HTML")
