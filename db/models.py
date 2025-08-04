@@ -36,7 +36,7 @@ class Sale(Base):
     stock_id: Mapped[int] = mapped_column(ForeignKey('stock.id'))
     seller_id: Mapped[int] = mapped_column(ForeignKey('users.user_id'))
     price: Mapped[float] = mapped_column(Float, nullable=False)
-    account: Mapped[str] = mapped_column(String(100), nullable=True) # Новое поле
+    account: Mapped[str] = mapped_column(String(250), nullable=True) # Новое поле
     label_link: Mapped[str] = mapped_column(String, nullable=True)
     screenshot_path: Mapped[str] = mapped_column(String, nullable=True)
     sale_date: Mapped[datetime] = mapped_column(DateTime, default=func.now())
