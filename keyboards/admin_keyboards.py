@@ -1,6 +1,6 @@
 from html import escape
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from db.models import Product, User, Sale, PlatformAccount
+from db.models import Product, User, Sale, PlatformAccount, Category
 
 def get_admin_panel_keyboard() -> InlineKeyboardMarkup:
     buttons = [
@@ -120,12 +120,31 @@ def get_product_management_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Поступление товара", callback_data="add_stock")],
         [InlineKeyboardButton(text="Редактировать товар", callback_data="edit_product")],
         [InlineKeyboardButton(text="Показать ID товаров", callback_data="show_product_ids")],
+        [InlineKeyboardButton(text="Управление категориями 🗂️", callback_data="manage_categories")],
         # [InlineKeyboardButton(text="Синхронизировать папки этикеток", callback_data="sync_label_folders")],
         [InlineKeyboardButton(text="Редактировать ID платформ", callback_data="edit_platform_ids")],
         [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="back_to_admin_panel")]
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
+
+def get_category_management_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для главного меню управления категориями."""
+    buttons = [
+        [InlineKeyboardButton(text="Добавить категорию", callback_data="add_category")],
+        [InlineKeyboardButton(text="Переименовать категорию", callback_data="rename_category")],
+        [InlineKeyboardButton(text="Удалить категорию", callback_data="delete_category")],
+        [InlineKeyboardButton(text="⬅️ Назад к управлению товарами", callback_data="manage_products")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def create_category_selection_keyboard(categories: list[Category], callback_prefix: str) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для выбора одной из существующих категорий."""
+    buttons = []
+    for cat in categories:
+        buttons.append([InlineKeyboardButton(text=cat.name, callback_data=f"{callback_prefix}_{cat.id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="manage_categories")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def create_product_selection_keyboard(products: list[Product], prefix: str) -> InlineKeyboardMarkup:
     buttons = []

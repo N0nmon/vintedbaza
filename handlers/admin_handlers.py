@@ -25,10 +25,11 @@ from keyboards.admin_keyboards import (
     create_filter_selection_keyboard, get_status_filter_keyboard,
     create_text_filter_selection_keyboard, get_reports_panel_keyboard,
     get_finance_summary_keyboard, get_account_management_keyboard,
-    create_account_selection_keyboard, create_assignment_selection_keyboard
+    create_account_selection_keyboard, create_assignment_selection_keyboard,
+    get_category_management_keyboard, create_category_selection_keyboard
 )
 from keyboards.common_keyboards import get_cancel_kb, remove_kb
-from states.admin_states import AdminStates, AddProductStates, EditProductStates, JournalFilterStates, ReportStates, AddStockStates, AccountManagementStates
+from states.admin_states import AdminStates, AddProductStates, EditProductStates, JournalFilterStates, ReportStates, AddStockStates, AccountManagementStates, CategoryStates
 
 router = Router()
 router.message.filter(F.from_user.id == settings.admin_id)
@@ -1143,3 +1144,142 @@ async def cancel_edit_platform_id_handler(callback: CallbackQuery, state: FSMCon
     await callback.answer("Редактирование отменено.")
     await edit_platform_ids_start(callback, state)
 # === КОНЕЦ БЛОКА ===
+
+@router.callback_query(F.data == "manage_categories")
+async def manage_categories_menu(callback: CallbackQuery, state: FSMContext):
+    """Показывает меню управления категориями."""
+    await state.clear() # На всякий случай чистим состояние
+    async with async_session() as session:
+        categories = (await session.execute(select(Category).order_by(Category.name))).scalars().all()
+
+    text = "🗂️ <b>Управление категориями</b>\n\nСуществующие категории:\n"
+    if not categories:
+        text += "<i>Пока не создано ни одной категории.</i>"
+    else:
+        text += "\n".join([f"• {escape(cat.name)}" for cat in categories])
+
+    await callback.message.edit_text(text, reply_markup=get_category_management_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+# --- Добавление категории ---
+@router.callback_query(F.data == "add_category")
+async def add_category_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(CategoryStates.add_category_name)
+    # Используем edit_text, чтобы изменить текущее сообщение
+    await callback.message.edit_text("Введите название новой категории:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="manage_categories")]]))
+    await callback.answer()
+
+@router.message(CategoryStates.add_category_name)
+async def add_category_process(message: Message, state: FSMContext):
+    category_name = message.text
+    async with async_session() as session:
+        exists = (await session.execute(select(Category).where(Category.name == category_name))).scalar_one_or_none()
+        if exists:
+            await message.answer("Категория с таким названием уже существует. Попробуйте другое.")
+            # Сразу удалим предыдущее сообщение бота ("Введите название...")
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id - 1)
+            return
+
+        new_category = Category(name=category_name)
+        session.add(new_category)
+        await session.commit()
+
+    await state.clear()
+    # Имитируем нажатие на кнопку, чтобы вернуться в меню
+    # Сначала удалим сообщение пользователя и предыдущее сообщение бота
+    await message.delete()
+    try:
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id - 1)
+    except: pass # Если сообщение уже удалено, ничего страшного
+    
+    # Создаем фейковый колбэк, чтобы вызвать manage_categories_menu
+    fake_callback = CallbackQuery(
+        id=str(message.message_id),
+        from_user=message.from_user,
+        chat_instance=message.chat.id, # chat_instance - обязательный параметр
+        message=message,
+        data="manage_categories"
+    )
+    await manage_categories_menu(fake_callback, state)
+
+
+# --- Переименование категории ---
+@router.callback_query(F.data == "rename_category")
+async def rename_category_start(callback: CallbackQuery, state: FSMContext):
+    async with async_session() as session:
+        categories = (await session.execute(select(Category).order_by(Category.name))).scalars().all()
+    if not categories:
+        await callback.answer("Нет категорий для переименования.", show_alert=True)
+        return
+
+    await state.set_state(CategoryStates.select_category_to_rename)
+    await callback.message.edit_text(
+        "Выберите категорию, которую хотите переименовать:",
+        reply_markup=create_category_selection_keyboard(categories, "rename_cat")
+    )
+
+@router.callback_query(F.data.startswith("rename_cat_"), CategoryStates.select_category_to_rename)
+async def rename_category_selected(callback: CallbackQuery, state: FSMContext):
+    category_id = int(callback.data.split("_")[-1])
+    await state.update_data(category_id=category_id)
+    await state.set_state(CategoryStates.enter_new_category_name)
+    await callback.message.edit_text("Введите новое название для категории:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="manage_categories")]]))
+    await callback.answer()
+
+@router.message(CategoryStates.enter_new_category_name)
+async def rename_category_process(message: Message, state: FSMContext):
+    data = await state.get_data()
+    category_id = data.get("category_id")
+    new_name = message.text
+
+    async with async_session() as session:
+        await session.execute(update(Category).where(Category.id == category_id).values(name=new_name))
+        await session.commit()
+
+    await state.clear()
+    await message.delete()
+    try:
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id - 1)
+    except: pass
+    
+    fake_callback = CallbackQuery(id=str(message.message_id), from_user=message.from_user, chat_instance=str(message.chat.id), message=message, data="manage_categories")
+    await manage_categories_menu(fake_callback, state)
+
+
+# --- Удаление категории ---
+@router.callback_query(F.data == "delete_category")
+async def delete_category_start(callback: CallbackQuery, state: FSMContext):
+    async with async_session() as session:
+        categories = (await session.execute(select(Category).order_by(Category.name))).scalars().all()
+    if not categories:
+        await callback.answer("Нет категорий для удаления.", show_alert=True)
+        return
+
+    await state.set_state(CategoryStates.select_category_to_delete)
+    await callback.message.edit_text(
+        "Выберите категорию для УДАЛЕНИЯ.\n\n"
+        "<b>Внимание:</b> Товары, находящиеся в этой категории, не будут удалены. "
+        "Они просто останутся без категории.",
+        parse_mode="HTML",
+        reply_markup=create_category_selection_keyboard(categories, "delete_cat")
+    )
+
+@router.callback_query(F.data.startswith("delete_cat_"), CategoryStates.select_category_to_delete)
+async def delete_category_process(callback: CallbackQuery, state: FSMContext):
+    category_id = int(callback.data.split("_")[-1])
+    async with async_session() as session:
+        category_to_delete = await session.get(Category, category_id)
+        if category_to_delete:
+            # Сначала отвязываем товары, чтобы избежать проблем с 'lazy="joined"'
+            await session.execute(
+                update(Product).where(Product.category_id == category_id).values(category_id=None)
+            )
+            # Теперь удаляем саму категорию
+            await session.delete(category_to_delete)
+            await session.commit()
+            await callback.answer(f"Категория «{escape(category_to_delete.name)}» удалена.", show_alert=True)
+        else:
+            await callback.answer("Категория не найдена.", show_alert=True)
+
+    await state.clear()
+    await manage_categories_menu(callback)

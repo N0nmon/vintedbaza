@@ -45,3 +45,9 @@ class AccountManagementStates(StatesGroup):
 class AddStockStates(StatesGroup):
     select_product = State()
     enter_sizes = State()
+
+class CategoryStates(StatesGroup):
+    add_category_name = State()
+    select_category_to_rename = State()
+    enter_new_category_name = State()
+    select_category_to_delete = State()
