@@ -14,7 +14,7 @@ from sqlalchemy import select, delete, func, update
 from sqlalchemy.orm import joinedload
 
 from db.database import async_session
-from db.models import User, Product, Stock, Sale, UserProductAccess, PlatformAccount, AccountAssignment
+from db.models import User, Product, Stock, Sale, UserProductAccess, PlatformAccount, AccountAssignment, Category
 from config import settings
 from keyboards.admin_keyboards import (
     get_admin_panel_keyboard, create_access_management_keyboard, 
